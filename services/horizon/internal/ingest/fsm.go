@@ -186,6 +186,9 @@ func (state startState) run(s *system) (transition, error) {
 			if err != nil {
 				return start(), errors.Wrap(err, "Error getting last checkpoint")
 			}
+			if lastCheckpoint == 0 {
+				lastCheckpoint = 3
+			}
 		}
 
 		if lastHistoryLedger != 0 {

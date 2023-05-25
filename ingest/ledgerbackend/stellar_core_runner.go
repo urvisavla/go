@@ -317,6 +317,7 @@ func (r *stellarCoreRunner) catchup(from, to uint32) error {
 		params = append(params, "--in-memory")
 	}
 
+	r.log.Infof("Run captive core catchup in offline mode %s", rangeArg)
 	var err error
 	r.cmd, err = r.createCmd(params...)
 	if err != nil {
@@ -364,12 +365,15 @@ func (r *stellarCoreRunner) runFrom(from uint32, hash string) error {
 
 	var err error
 
+	r.log.Infof("Run captive core runFrom %d %d", from, hash)
 	if r.useDB {
 		// Check if on-disk core DB exists and what's the LCL there. If not what
 		// we need remove storage dir and start from scratch.
 		removeStorageDir := false
 		var info stellarcore.InfoResponse
 		info, err = r.offlineInfo()
+		r.log.Infof("Run captive core offline-info: %v", info)
+
 		if err != nil {
 			r.log.Infof("Error running offline-info: %v, removing existing storage-dir contents", err)
 			removeStorageDir = true
@@ -396,8 +400,10 @@ func (r *stellarCoreRunner) runFrom(from uint32, hash string) error {
 			// Do a quick catch-up to set the LCL in core to be our expected starting
 			// point.
 			if from > 2 {
+				r.log.Infof("Run captive core catchup %d/0", from-1)
 				cmd, err = r.createCmd("catchup", fmt.Sprintf("%d/0", from-1))
 			} else {
+				r.log.Infof("Run captive core catchup 2/0")
 				cmd, err = r.createCmd("catchup", "2/0")
 			}
 
@@ -409,6 +415,7 @@ func (r *stellarCoreRunner) runFrom(from uint32, hash string) error {
 				return errors.Wrap(err, "error runing stellar-core catchup")
 			}
 		}
+		r.log.Infof("Run captive core run --metadata-output-stream")
 
 		r.cmd, err = r.createCmd(
 			"run",
@@ -416,6 +423,8 @@ func (r *stellarCoreRunner) runFrom(from uint32, hash string) error {
 			r.getPipeName(),
 		)
 	} else {
+		r.log.Infof("Run captive core run --start-at-ledger %s --start-at-hash %s", fmt.Sprintf("%d", from), hash)
+
 		r.cmd, err = r.createCmd(
 			"run",
 			"--in-memory",
