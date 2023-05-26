@@ -420,7 +420,9 @@ func (r resumeState) run(s *system) (transition, error) {
 	s.metrics.LocalLatestLedger.Set(float64(r.latestSuccessfullyProcessedLedger))
 
 	ingestLedger := r.latestSuccessfullyProcessedLedger + 1
-
+	if r.latestSuccessfullyProcessedLedger == 1 {
+		ingestLedger = 3
+	}
 	err := s.maybePrepareRange(s.ctx, ingestLedger)
 	if err != nil {
 		return start(), err
