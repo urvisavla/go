@@ -178,15 +178,20 @@ func (state startState) run(s *system) (transition, error) {
 		// `LastLedgerIngest` value is blocked for update and will always
 		// be updated when leading instance finishes processing state.
 		// In case of errors it will start `Init` from the beginning.
+
+		log.Infof("Determining lastCheckpoint from start_state")
 		var lastCheckpoint uint32
 		if state.suggestedCheckpoint != 0 {
 			lastCheckpoint = state.suggestedCheckpoint
 		} else {
 			lastCheckpoint, err = s.historyAdapter.GetLatestLedgerSequence()
+			log.Infof("s.historyAdapter.GetLatestLedgerSequence() %d", lastCheckpoint)
+
 			if err != nil {
 				return start(), errors.Wrap(err, "Error getting last checkpoint")
 			}
 		}
+		log.Infof("LastCheckpoint from start_state %s", lastCheckpoint)
 
 		if lastHistoryLedger != 0 {
 			// There are ledgers in history_ledgers table. This means that the
