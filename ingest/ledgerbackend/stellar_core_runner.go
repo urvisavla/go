@@ -399,7 +399,7 @@ func (r *stellarCoreRunner) runFrom(from uint32, hash string) error {
 
 			// Do a quick catch-up to set the LCL in core to be our expected starting
 			// point.
-			if from >= 2 {
+			if from > 2 {
 				r.log.Infof("Run captive core catchup %d/0", from-1)
 				cmd, err = r.createCmd("catchup", fmt.Sprintf("%d/0", from-1))
 			} else {
