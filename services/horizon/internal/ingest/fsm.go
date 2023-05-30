@@ -191,8 +191,8 @@ func (state startState) run(s *system) (transition, error) {
 				return start(), errors.Wrap(err, "Error getting last checkpoint")
 			}
 		}
-		log.Infof("LastCheckpoint from start_state %s", lastCheckpoint)
 
+		log.Infof("4877 lastHistoryLedger=%d  lastcheckpoint=%d", lastHistoryLedger, lastCheckpoint)
 		if lastHistoryLedger != 0 {
 			// There are ledgers in history_ledgers table. This means that the
 			// old or new ingest system was running prior the upgrade. In both
@@ -203,21 +203,27 @@ func (state startState) run(s *system) (transition, error) {
 			//   the latest checkpoint ledger.
 			// * Build state from the last checkpoint if the latest history ledger
 			//   is equal to the latest checkpoint ledger.
+
 			switch {
 			case lastHistoryLedger > lastCheckpoint:
+				log.Infof("4877 waitForCheckPoint lastcheckpoint=%d", lastCheckpoint)
 				return waitForCheckPoint(), nil
 			case lastHistoryLedger < lastCheckpoint:
+				log.Infof("4877 historyRange from lastHistoryLedger+1=%d lastCheckpoint=%d", lastHistoryLedger+1, lastCheckpoint)
+
 				return historyRange(lastHistoryLedger+1, lastCheckpoint), nil
 			default: // lastHistoryLedger == lastCheckpoint
 				// Build state but make sure it's using `lastCheckpoint`. It's possible
 				// that the new checkpoint will be created during state transition.
+
+				log.Infof("4877 Rebuild from lastcheckpoint=%d", lastCheckpoint)
 				return rebuild(lastCheckpoint), nil
 			}
 		}
-
+		log.Infof("4877 Rebuild from lastcheckpoint", lastCheckpoint)
 		return rebuild(lastCheckpoint), nil
 	}
-
+	log.Infof("4877 lastHistoryLedger=%d  lastIngestedLedger=%d", lastHistoryLedger, lastIngestedLedger)
 	switch {
 	case lastHistoryLedger > lastIngestedLedger:
 		// Ingestion was running at some point the past but was turned off.
@@ -422,6 +428,9 @@ func (r resumeState) run(s *system) (transition, error) {
 	s.metrics.LocalLatestLedger.Set(float64(r.latestSuccessfullyProcessedLedger))
 
 	ingestLedger := r.latestSuccessfullyProcessedLedger + 1
+	if r.latestSuccessfullyProcessedLedger == 1 {
+		ingestLedger = 3
+	}
 	err := s.maybePrepareRange(s.ctx, ingestLedger)
 	if err != nil {
 		return start(), err
@@ -453,7 +462,7 @@ func (r resumeState) run(s *system) (transition, error) {
 		return retryResume(r), errors.Wrap(err, getLastIngestedErrMsg)
 	}
 
-	if ingestLedger > lastIngestedLedger+1 {
+	if ingestLedger > 3 && ingestLedger > lastIngestedLedger+1 {
 		return start(), errors.New("expected ingest ledger to be at most one greater " +
 			"than last ingested ledger in db")
 	} else if ingestLedger <= lastIngestedLedger {
