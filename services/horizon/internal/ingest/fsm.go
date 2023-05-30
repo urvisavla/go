@@ -460,7 +460,7 @@ func (r resumeState) run(s *system) (transition, error) {
 		return retryResume(r), errors.Wrap(err, getLastIngestedErrMsg)
 	}
 
-	if ingestLedger > 3 && ingestLedger > lastIngestedLedger+1 {
+	if ingestLedger > lastIngestedLedger+1 {
 		return start(), errors.New("expected ingest ledger to be at most one greater " +
 			"than last ingested ledger in db")
 	} else if ingestLedger <= lastIngestedLedger {

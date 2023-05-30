@@ -402,14 +402,17 @@ func (r *stellarCoreRunner) runFrom(from uint32, hash string) error {
 			if from > 2 {
 				r.log.Infof("Run captive core catchup %d/0", from-1)
 				cmd, err = r.createCmd("catchup", fmt.Sprintf("%d/0", from-1))
+			} else {
+				r.log.Infof("Run captive core catchup 2/0")
+				cmd, err = r.createCmd("catchup", "2/0")
+			}
 
-				if err != nil {
-					return errors.Wrap(err, "error creating command")
-				}
+			if err != nil {
+				return errors.Wrap(err, "error creating command")
+			}
 
-				if err = cmd.Run(); err != nil {
-					return errors.Wrap(err, "error runing stellar-core catchup")
-				}
+			if err = cmd.Run(); err != nil {
+				return errors.Wrap(err, "error runing stellar-core catchup")
 			}
 		}
 		r.log.Infof("Run captive core run --metadata-output-stream")
