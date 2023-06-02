@@ -264,7 +264,7 @@ func TestCurrentStateRaceCondition(t *testing.T) {
 			skipChecks: true,
 			stop:       true}
 		for range getCh {
-			s.runStateMachine(state)
+			_ = s.runStateMachine(state)
 		}
 		close(doneCh)
 	}()
