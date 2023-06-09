@@ -314,11 +314,11 @@ func (c *CaptiveStellarCore) openOfflineReplaySubprocess(from, to uint32) error 
 	// the requested ledger
 	ran := BoundedRange(from, to)
 	c.ledgerSequenceLock.Lock()
+	defer c.ledgerSequenceLock.Unlock()
+
 	c.prepared = &ran
 	c.nextLedger = c.roundDownToFirstReplayAfterCheckpointStart(from)
 	c.lastLedger = &to
-	c.ledgerSequenceLock.Unlock()
-
 	c.previousLedgerHash = nil
 
 	return nil
@@ -340,12 +340,12 @@ func (c *CaptiveStellarCore) openOnlineReplaySubprocess(ctx context.Context, fro
 	// This is to support versions before and after/including v17.1.0 that
 	// introduced minimal persistent DB.
 	c.ledgerSequenceLock.Lock()
+	defer c.ledgerSequenceLock.Unlock()
+
 	c.nextLedger = 0
 	ran := UnboundedRange(from)
 	c.prepared = &ran
 	c.lastLedger = nil
-	c.ledgerSequenceLock.Unlock()
-
 	c.previousLedgerHash = nil
 
 	return nil
