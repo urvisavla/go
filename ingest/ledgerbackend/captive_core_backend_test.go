@@ -5,12 +5,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"sync"
 
 	"github.com/stellar/go/historyarchive"
 	"github.com/stellar/go/network"
@@ -652,7 +652,7 @@ func TestGetLatestLedgerSequenceRaceCondition(t *testing.T) {
 	metaChan := make(chan metaResult, toSeq)
 
 	for i := fromSeq; i <= toSeq; i++ {
-		meta := buildLedgerCloseMeta(testLedgerHeader{sequence: uint32(i)})
+		meta := buildLedgerCloseMeta(testLedgerHeader{sequence: i})
 		metaChan <- metaResult{
 			LedgerCloseMeta: &meta,
 		}
@@ -667,7 +667,7 @@ func TestGetLatestLedgerSequenceRaceCondition(t *testing.T) {
 	mockArchive.
 		On("GetRootHAS").
 		Return(historyarchive.HistoryArchiveState{
-			CurrentLedger: uint32(toSeq * 2),
+			CurrentLedger: toSeq * 2,
 		}, nil)
 
 	mockArchive.
@@ -683,7 +683,8 @@ func TestGetLatestLedgerSequenceRaceCondition(t *testing.T) {
 	}
 
 	ledgerRange := UnboundedRange(fromSeq)
-	captiveBackend.PrepareRange(ctx, ledgerRange)
+	err := captiveBackend.PrepareRange(ctx, ledgerRange)
+	assert.NoError(t, err)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -695,13 +696,14 @@ func TestGetLatestLedgerSequenceRaceCondition(t *testing.T) {
 			case <-ctx.Done():
 				return
 			default:
-				captiveBackend.GetLatestLedgerSequence(ctx)
+				_, _ = captiveBackend.GetLatestLedgerSequence(ctx)
 			}
 		}
 	}(ctx)
 
 	for i := fromSeq; i < toSeq; i++ {
-		captiveBackend.GetLedger(ctx, uint32(i))
+		_, err = captiveBackend.GetLedger(ctx, i)
+		assert.NoError(t, err)
 	}
 
 	cancel()
