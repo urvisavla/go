@@ -650,18 +650,23 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 					viper.Set(StellarCoreBinaryPathName, binaryPath)
 					config.CaptiveCoreBinaryPath = binaryPath
 				}
+			} else {
+				config.CaptiveCoreBinaryPath = binaryPath
 			}
+		}
+
+		// Create config for local captive core
+		if config.EnableCaptiveCoreIngestion && config.RemoteCaptiveCoreURL == "" {
 
 			// NOTE: If both of these are set (regardless of user- or PATH-supplied
 			//       defaults for the binary path), the Remote Captive Core URL
 			//       takes precedence.
-			if binaryPath == "" && config.RemoteCaptiveCoreURL == "" {
+			if config.CaptiveCoreBinaryPath == "" {
 				return fmt.Errorf("Invalid config: captive core requires that either --%s or --remote-captive-core-url is set. %s",
 					StellarCoreBinaryPathName, captiveCoreMigrationHint)
 			}
-
-			config.CaptiveCoreTomlParams.CoreBinaryPath = binaryPath
-			if config.RemoteCaptiveCoreURL == "" && (binaryPath == "" || config.CaptiveCoreConfigPath == "") {
+			config.CaptiveCoreTomlParams.CoreBinaryPath = config.CaptiveCoreBinaryPath
+			if config.CaptiveCoreConfigPath == "" {
 				if options.RequireCaptiveCoreConfig {
 					var err error
 					errorMessage := fmt.Errorf(
@@ -707,7 +712,7 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 						return fmt.Errorf("Invalid captive core toml file %v", err)
 					}
 				}
-			} else if config.RemoteCaptiveCoreURL == "" {
+			} else {
 				var err error
 				config.CaptiveCoreTomlParams.HistoryArchiveURLs = config.HistoryArchiveURLs
 				config.CaptiveCoreTomlParams.NetworkPassphrase = config.NetworkPassphrase
@@ -719,7 +724,7 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 
 			// If we don't supply an explicit core URL and we are running a local
 			// captive core process with the http port enabled, point to it.
-			if config.StellarCoreURL == "" && config.RemoteCaptiveCoreURL == "" && config.CaptiveCoreToml.HTTPPort != 0 {
+			if config.StellarCoreURL == "" && config.CaptiveCoreToml.HTTPPort != 0 {
 				config.StellarCoreURL = fmt.Sprintf("http://localhost:%d", config.CaptiveCoreToml.HTTPPort)
 				viper.Set(StellarCoreURLFlagName, config.StellarCoreURL)
 			}
