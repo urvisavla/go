@@ -49,6 +49,8 @@ const (
 	// NetworkFlagName is the command line flag for specifying the "network"
 	NetworkFlagName              = "network"
 	EnableIngestionFilteringFlag = "exp-enable-ingestion-filtering"
+	// EnableCaptiveCoreIngestionFlagName is the command line flag for enabling captive-core.
+	EnableCaptiveCoreIngestionFlagName = "enable-captive-core-ingestion"
 
 	captiveCoreMigrationHint = "If you are migrating from Horizon 1.x.y, start with the Migration Guide here: https://developers.stellar.org/docs/run-api-server/migrating/"
 	// StellarPubnet is a constant representing the Stellar public network
@@ -199,7 +201,7 @@ func Flags() (*Config, support.ConfigOptions) {
 			ConfigKey: &config.CaptiveCoreConfigUseDB,
 		},
 		&support.ConfigOption{
-			Name:        "enable-captive-core-ingestion",
+			Name:        EnableCaptiveCoreIngestionFlagName,
 			OptType:     types.Bool,
 			FlagDefault: true,
 			Required:    false,
@@ -819,6 +821,10 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 	config.EnableIngestionFiltering = true
 
 	if config.Ingest {
+		if config.Network != "" && !config.EnableCaptiveCoreIngestion {
+			return fmt.Errorf("invalid config: --%s parameter requires --%s to be set to true",
+				NetworkFlagName, EnableCaptiveCoreIngestionFlagName)
+		}
 		// Migrations should be checked as early as possible. Apply and check
 		// only on ingesting instances which are required to have write-access
 		// to the DB.
@@ -840,13 +846,14 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 			}
 		}
 	} else {
-		if config.EnableCaptiveCoreIngestion && (config.CaptiveCoreBinaryPath != "" || config.CaptiveCoreConfigPath != "") {
+		if config.EnableCaptiveCoreIngestion &&
+			(config.CaptiveCoreBinaryPath != "" || config.CaptiveCoreConfigPath != "" || config.Network != "") {
 			captiveCoreConfigFlag := captiveCoreConfigAppendPathName
 			if viper.GetString(CaptiveCoreConfigPathName) != "" {
 				captiveCoreConfigFlag = CaptiveCoreConfigPathName
 			}
-			return fmt.Errorf("Invalid config: one or more captive core params passed (--%s or --%s) but --ingest not set. "+captiveCoreMigrationHint,
-				StellarCoreBinaryPathName, captiveCoreConfigFlag)
+			return fmt.Errorf("invalid config: one or more captive core params passed (--%s or --%s or --%s) "+
+				"but --ingest not set. "+captiveCoreMigrationHint, StellarCoreBinaryPathName, captiveCoreConfigFlag, NetworkFlagName)
 		}
 		if config.StellarCoreDatabaseURL != "" {
 			return fmt.Errorf("Invalid config: --%s passed but --ingest not set. ", StellarCoreDBURLFlagName)
