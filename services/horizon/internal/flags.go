@@ -769,14 +769,6 @@ func setCaptiveCoreConfiguration(config *Config) error {
 	}
 
 	if config.Network != "" {
-		// Make sure stellar-core binary is installed and is available in the OS $PATH
-		cmd := exec.Command("stellar-core")
-		_ = cmd.Run()
-		if cmd.Err != nil {
-			return errors.Wrap(cmd.Err, "error executing stellar-core."+
-				" Please ensure that stellar-core binary to be installed and available in the OS PATH.")
-		}
-
 		err := createCaptiveCoreConfigFromNetwork(config)
 		if err != nil {
 			return errors.Wrap(err, "error generating default captive core config.")
