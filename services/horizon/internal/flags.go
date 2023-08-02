@@ -606,10 +606,12 @@ func Flags() (*Config, support.ConfigOptions) {
 				*co.ConfigKey.(*string) = val
 				return nil
 			},
-			Usage: fmt.Sprintf("stellar public network, either '%s' or '%s'."+
-				" It automatically configures network settings, including %s, %s, and %s.",
-				StellarPubnet, StellarTestnet, NetworkPassphraseFlagName,
-				HistoryArchiveURLsFlagName, CaptiveCoreConfigPathName),
+			Usage: fmt.Sprintf("Specify the stellar public network, either '%s' or '%s'."+
+				" Upon selecting the network, captive-core configuration will be automatically generated,"+
+				" and the following configuration parameters will be set automatically: --%s, --%s, --%s, --%s, and --%s. "+
+				" Please ensure that the stellar-core binary is installed and available in the Operating System PATH.",
+				StellarPubnet, StellarTestnet, EnableCaptiveCoreIngestionFlagName, CaptiveCoreConfigPathName,
+				StellarCoreBinaryPathName, NetworkPassphraseFlagName, HistoryArchiveURLsFlagName),
 		},
 	}
 
@@ -713,14 +715,6 @@ func loadCaptiveCoreTomlFromFile(config *Config) error {
 // validates the configuration settings, sets default values, and loads the Captive Core TOML file.
 func createCaptiveCoreConfigFromNetwork(config *Config) error {
 
-	if config.NetworkPassphrase != "" {
-		return fmt.Errorf("invalid config: %s not allowed with %s network", NetworkPassphraseFlagName, config.Network)
-	}
-
-	if len(config.HistoryArchiveURLs) > 0 {
-		return fmt.Errorf("invalid config: %s not allowed with %s network", HistoryArchiveURLsFlagName, config.Network)
-	}
-
 	var defaultNetworkConfig networkConfig
 	switch config.Network {
 	case StellarPubnet:
@@ -733,11 +727,7 @@ func createCaptiveCoreConfigFromNetwork(config *Config) error {
 	config.NetworkPassphrase = defaultNetworkConfig.networkPassphrase
 	config.HistoryArchiveURLs = defaultNetworkConfig.historyArchiveURLs
 
-	if config.CaptiveCoreConfigPath == "" {
-		return loadDefaultCaptiveCoreToml(config, defaultNetworkConfig.defaultConfig)
-	}
-
-	return loadCaptiveCoreTomlFromFile(config)
+	return loadDefaultCaptiveCoreToml(config, defaultNetworkConfig.defaultConfig)
 }
 
 // createCaptiveCoreConfigFromParameters generates the Captive Core configuration.
@@ -779,6 +769,14 @@ func setCaptiveCoreConfiguration(config *Config) error {
 	}
 
 	if config.Network != "" {
+		// Make sure stellar-core binary is installed and is available in the OS $PATH
+		cmd := exec.Command("stellar-core")
+		_ = cmd.Run()
+		if cmd.Err != nil {
+			return errors.Wrap(cmd.Err, "error executing stellar-core."+
+				" Please ensure that stellar-core binary to be installed and available in the OS PATH.")
+		}
+
 		err := createCaptiveCoreConfigFromNetwork(config)
 		if err != nil {
 			return errors.Wrap(err, "error generating default captive core config.")
@@ -794,6 +792,47 @@ func setCaptiveCoreConfiguration(config *Config) error {
 	// point to it.
 	if config.StellarCoreURL == "" && config.CaptiveCoreToml.HTTPPort != 0 {
 		config.StellarCoreURL = fmt.Sprintf("http://localhost:%d", config.CaptiveCoreToml.HTTPPort)
+	}
+
+	return nil
+}
+
+// validateNetworkConfigParameter validates the config when "network" parameter is specified
+func validateNetworkConfigParameter(config *Config) error {
+	invalidConfigErrMsg := "invalid configuration: You cannot specify --%s with the '%s' network parameter"
+
+	if config.Network != StellarPubnet && config.Network != StellarTestnet {
+		return fmt.Errorf("network %s is invalid", config.Network)
+	}
+
+	// Ideally, we want to ensure that "ingest" and "enable-captive-core-ingestion" are not supplied
+	// when using the "network" parameter. However, due to them being true by default, it becomes challenging
+	// to determine if they are explicitly set or not without writing additional logic. So, in order to
+	// keep it simple, we check here if either of them is explicitly set to false and display an error message.
+	if !config.EnableCaptiveCoreIngestion {
+		return fmt.Errorf(invalidConfigErrMsg+". By default, --%s is true when the network parameter is specified",
+			EnableCaptiveCoreIngestionFlagName, config.Network, EnableCaptiveCoreIngestionFlagName)
+	}
+
+	if !config.Ingest {
+		return fmt.Errorf(invalidConfigErrMsg+". By default, --%s is true when the network parameter is specified",
+			IngestFlagName, config.Network, IngestFlagName)
+	}
+
+	if config.CaptiveCoreBinaryPath != "" {
+		return fmt.Errorf(invalidConfigErrMsg, StellarCoreBinaryPathName, config.Network)
+	}
+
+	if config.CaptiveCoreConfigPath != "" {
+		return fmt.Errorf(invalidConfigErrMsg, CaptiveCoreConfigPathName, config.Network)
+	}
+
+	if config.NetworkPassphrase != "" {
+		return fmt.Errorf(invalidConfigErrMsg, NetworkPassphraseFlagName, config.Network)
+	}
+
+	if len(config.HistoryArchiveURLs) > 0 {
+		return fmt.Errorf(invalidConfigErrMsg, HistoryArchiveURLsFlagName, config.Network)
 	}
 
 	return nil
@@ -820,11 +859,13 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 
 	config.EnableIngestionFiltering = true
 
-	if config.Ingest {
-		if config.Network != "" && !config.EnableCaptiveCoreIngestion {
-			return fmt.Errorf("invalid config: --%s parameter requires --%s to be set to true",
-				NetworkFlagName, EnableCaptiveCoreIngestionFlagName)
+	if config.Network != "" {
+		if err := validateNetworkConfigParameter(config); err != nil {
+			return err
 		}
+	}
+
+	if config.Ingest {
 		// Migrations should be checked as early as possible. Apply and check
 		// only on ingesting instances which are required to have write-access
 		// to the DB.
@@ -847,13 +888,13 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 		}
 	} else {
 		if config.EnableCaptiveCoreIngestion &&
-			(config.CaptiveCoreBinaryPath != "" || config.CaptiveCoreConfigPath != "" || config.Network != "") {
+			(config.CaptiveCoreBinaryPath != "" || config.CaptiveCoreConfigPath != "") {
 			captiveCoreConfigFlag := captiveCoreConfigAppendPathName
 			if viper.GetString(CaptiveCoreConfigPathName) != "" {
 				captiveCoreConfigFlag = CaptiveCoreConfigPathName
 			}
-			return fmt.Errorf("invalid config: one or more captive core params passed (--%s or --%s or --%s) "+
-				"but --ingest not set. "+captiveCoreMigrationHint, StellarCoreBinaryPathName, captiveCoreConfigFlag, NetworkFlagName)
+			return fmt.Errorf("invalid config: one or more captive core params passed (--%s or --%s) "+
+				"but --ingest not set. "+captiveCoreMigrationHint, StellarCoreBinaryPathName, captiveCoreConfigFlag)
 		}
 		if config.StellarCoreDatabaseURL != "" {
 			return fmt.Errorf("Invalid config: --%s passed but --ingest not set. ", StellarCoreDBURLFlagName)
