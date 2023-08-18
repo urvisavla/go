@@ -70,6 +70,7 @@ type ConfigOption struct {
 	ConfigKey      interface{}               // Pointer to the final key in the linked Config struct
 	flag           *pflag.Flag               // The persistent flag that the config option is attached to
 	Hidden         bool                      // Indicates whether to hide the flag from --help output
+	EnvOnly        bool                      // Indicates the option is supported via environment variable only (no commandline)
 }
 
 // Init handles initialisation steps, including configuring and binding the env variable name.
@@ -79,20 +80,25 @@ func (co *ConfigOption) Init(cmd *cobra.Command) error {
 	if co.EnvVar == "" {
 		co.EnvVar = strutils.KebabToConstantCase(co.Name)
 	}
-	// Initialise and bind the persistent flags
-	return co.setFlag(cmd)
+	if !co.EnvOnly {
+		// Initialise and bind the persistent flags
+		return co.setFlag(cmd)
+	}
+	return nil
 }
 
 // SetDeprecated Hides the deprecated flag from --help output
 func (co *ConfigOption) SetDeprecated(cmd *cobra.Command) {
-	if co.Hidden {
+	if !co.EnvOnly && co.Hidden {
 		co.flag.Hidden = true
 	}
 }
 
 // Bind binds the config option to viper.
 func (co *ConfigOption) Bind() {
-	viper.BindPFlag(co.Name, co.flag)
+	if !co.EnvOnly {
+		viper.BindPFlag(co.Name, co.flag)
+	}
 	viper.BindEnv(co.Name, co.EnvVar)
 }
 
@@ -237,7 +243,12 @@ var envVars = parseEnvVars(os.Environ())
 func IsExplicitlySet(co *ConfigOption) bool {
 	// co.flag.Changed is only set to true when the configuration is set via command line parameter.
 	// In the case where a variable is configured via environment variable we need to check envVars.
-	return co.flag.Changed || envVars[co.EnvVar]
+	return (co.flag != nil && co.flag.Changed) || envVars[co.EnvVar]
+}
+
+// IsSetViaCommandline returns true if the config option was set via commandline
+func (co *ConfigOption) IsSetViaCommandline() bool {
+	return co.flag != nil && co.flag.Value.String() != ""
 }
 
 // SetOptionalString converts a command line uint to a *string where the nil

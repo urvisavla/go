@@ -1,9 +1,13 @@
 package horizon
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	stdLog "log"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -130,4 +134,30 @@ func Test_createCaptiveCoreConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDatabaseUrlDeprecationWarning(t *testing.T) {
+	origWriter := stdLog.Writer()
+	defer stdLog.SetOutput(origWriter)
+
+	config, flags := Flags()
+	horizonCmd := &cobra.Command{
+		Use: "horizon",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			err := ApplyFlags(config, flags, ApplyOptions{RequireCaptiveCoreConfig: true, AlwaysIngest: false})
+			return err
+		},
+	}
+
+	var writer io.Writer = &bytes.Buffer{}
+	stdLog.SetOutput(writer)
+	horizonCmd.SetArgs([]string{"--" + DatabaseURLFlagName + "=testUrl",
+		"--" + IngestFlagName + "=false",
+		"--" + EnableCaptiveCoreIngestionFlagName + "=false",
+		"--" + StellarCoreURLFlagName + "=testUrl",
+	})
+	_ = flags.Init(horizonCmd)
+	err := horizonCmd.Execute()
+	assert.NoError(t, err)
+	assert.Contains(t, writer.(*bytes.Buffer).String(), dbUrlDeprecationWarning)
 }

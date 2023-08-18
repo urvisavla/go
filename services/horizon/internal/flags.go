@@ -62,6 +62,10 @@ const (
 	StellarPubnet = "pubnet"
 	// StellarTestnet is a constant representing the Stellar test network
 	StellarTestnet = "testnet"
+
+	dbUrlDeprecationWarning = "DEPRECATION WARNING: --db-url is deprecated and will be removed in a future" +
+		" Horizon release. Please use the DATABASE_URL environment variable to configure Horizon's" +
+		" PostgreSQL database connection"
 )
 
 // validateBothOrNeither ensures that both options are provided, if either is provided.
@@ -132,7 +136,18 @@ func Flags() (*Config, support.ConfigOptions) {
 			ConfigKey: &config.DatabaseURL,
 			OptType:   types.String,
 			Required:  true,
-			Usage:     "horizon postgres database to connect with",
+			Usage:     dbUrlDeprecationWarning,
+			CustomSetValue: func(co *support.ConfigOption) error {
+				if val := viper.GetString(DatabaseURLFlagName); val != "" {
+					if co.IsSetViaCommandline() {
+						stdLog.Printf(dbUrlDeprecationWarning)
+
+					}
+					config.DatabaseURL = val
+				}
+				return nil
+			},
+			EnvOnly: false, // set this to true when removing this option from the commandline
 		},
 		&support.ConfigOption{
 			Name:      "ro-database-url",
