@@ -33,9 +33,9 @@ jobs:
     env:
       HORIZON_INTEGRATION_TESTS_ENABLED: true
       HORIZON_INTEGRATION_TESTS_CORE_MAX_SUPPORTED_PROTOCOL: ${{ matrix.protocol-version }}
-      PROTOCOL_20_CORE_DEBIAN_PKG_VERSION: 19.13.1-1458.431e4e324.focal~soroban~settings~override
-      PROTOCOL_20_CORE_DOCKER_IMG: stellar/unsafe-stellar-core-next:19.13.1-1458.431e4e324.focal-soroban-settings-override
-      PROTOCOL_20_SOROBAN_RPC_DOCKER_IMG: stellar/soroban-rpc:0.9.4-increaseinstructions-26
+      PROTOCOL_20_CORE_DEBIAN_PKG_VERSION: 19.13.1-1469.76fed6ead.focal~soroban
+      PROTOCOL_20_CORE_DOCKER_IMG: stellar/unsafe-stellar-core-next:19.13.1-1469.76fed6ead.focal-soroban
+      PROTOCOL_20_SOROBAN_RPC_DOCKER_IMG: stellar/soroban-rpc:0.9.4-fix-fees-31
       PROTOCOL_19_CORE_DEBIAN_PKG_VERSION: 19.12.0-1378.2109a168a.focal
       PROTOCOL_19_CORE_DOCKER_IMG: stellar/stellar-core:19.12.0-1378.2109a168a.focal
       PGHOST: localhost
@@ -108,7 +108,7 @@ jobs:
       - name: Calculate the source hash
         id: calculate_source_hash
         run: |
-          combined_hash=$(echo "horizon-hash-${{ hashFiles('./horizon') }}-${{ hashFiles('./clients/horizonclient/**') }}-${{ hashFiles('./protocols/horizon/**') }}-${{ hashFiles('./txnbuild/**') }}-${{ hashFiles('./ingest/**') }}-${{ hashFiles('./xdr/**') }}-${{ hashFiles('./services/**') }}-${{ env.PROTOCOL_20_CORE_DOCKER_IMG }}-${{ env.PROTOCOL_19_CORE_DOCKER_IMG }}-${{ github.job }}" | sha256sum | cut -d ' ' -f 1)
+          combined_hash=$(echo "horizon-hash-${{ hashFiles('./horizon') }}-${{ hashFiles('./clients/horizonclient/**') }}-${{ hashFiles('./protocols/horizon/**') }}-${{ hashFiles('./txnbuild/**') }}-${{ hashFiles('./ingest/**') }}-${{ hashFiles('./xdr/**') }}-${{ hashFiles('./services/**') }}-${{ env.PROTOCOL_20_CORE_DOCKER_IMG }}-${{ env.PROTOCOL_19_CORE_DOCKER_IMG }}-${{ env.PREFIX }}" | sha256sum | cut -d ' ' -f 1)
           echo "COMBINED_SOURCE_HASH=$combined_hash" >> "$GITHUB_ENV"
 
       - name: Restore Horizon binary and integration tests source hash to cache
@@ -116,13 +116,14 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: ./empty
+          lookup-only: true
           key: ${{ env.COMBINED_SOURCE_HASH }}
 
       - if: ${{ steps.horizon_binary_tests_hash.outputs.cache-hit != 'true' }}
         run: go test -race -timeout 45m -v ./services/horizon/internal/integration/...
 
       - name: Save Horizon binary and integration tests source hash to cache
-        if: ${{ success() }}
+        if: ${{ success() && steps.horizon_binary_tests_hash.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v3
         with:
           path: ./empty
