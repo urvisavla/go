@@ -709,11 +709,13 @@ func getCaptiveCoreConfigFromNetworkParameter(config *Config) (networkConfig, er
 	var defaultNetworkConfig networkConfig
 
 	if config.NetworkPassphrase != "" {
-		return defaultNetworkConfig, fmt.Errorf("invalid config: %s parameter not allowed with the %s parameter", NetworkPassphraseFlagName, NetworkFlagName)
+		return defaultNetworkConfig, fmt.Errorf("invalid config: %s parameter not allowed with the %s parameter",
+			NetworkPassphraseFlagName, NetworkFlagName)
 	}
 
 	if len(config.HistoryArchiveURLs) > 0 {
-		return defaultNetworkConfig, fmt.Errorf("invalid config: %s parameter not allowed with the %s parameter", HistoryArchiveURLsFlagName, NetworkFlagName)
+		return defaultNetworkConfig, fmt.Errorf("invalid config: %s parameter not allowed with the %s parameter",
+			HistoryArchiveURLsFlagName, NetworkFlagName)
 	}
 
 	switch config.Network {
@@ -765,7 +767,7 @@ func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 	config.CaptiveCoreTomlParams.NetworkPassphrase = config.NetworkPassphrase
 
 	var err error
-	if options.RequireCaptiveCoreFullConfig == false {
+	if !options.RequireCaptiveCoreFullConfig {
 		// Creates a minimal captive-core config (without quorum information), just enough to run captive core.
 		// This is used by certain database commands, such as `reingest and fill-gaps, to reingest historical data.
 		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreToml(config.CaptiveCoreTomlParams)
