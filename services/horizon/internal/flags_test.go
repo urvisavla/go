@@ -71,7 +71,7 @@ func Test_createCaptiveCoreDefaultConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := createCaptiveCoreConfigFromNetwork(&tt.config)
+			_, e := getCaptiveCoreConfigFromNetworkParameter(&tt.config)
 			if tt.errStr == "" {
 				assert.NoError(t, e)
 				assert.Equal(t, tt.networkPassphrase, tt.config.NetworkPassphrase)
@@ -128,8 +128,8 @@ func Test_createCaptiveCoreConfig(t *testing.T) {
 				NetworkPassphrase:  PubnetConf.NetworkPassphrase,
 				HistoryArchiveURLs: PubnetConf.HistoryArchiveURLs,
 			},
-			errStr: fmt.Sprintf("invalid config: captive core requires that --%s is set",
-				CaptiveCoreConfigPathName),
+			errStr: fmt.Sprintf("invalid config: captive core requires that --%s is set or "+
+				"you can set the --%s parameter to use the default captive core config", CaptiveCoreConfigPathName, NetworkFlagName),
 		},
 		{
 			name:                     "no network specified; captive-core-config-path invalid file",
@@ -167,8 +167,8 @@ func Test_createCaptiveCoreConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := createCaptiveCoreConfigFromParameters(&tt.config,
-				ApplyOptions{RequireCaptiveCoreConfig: tt.requireCaptiveCoreConfig})
+			e := setCaptiveCoreConfiguration(&tt.config,
+				ApplyOptions{RequireCaptiveCoreFullConfig: tt.requireCaptiveCoreConfig})
 			if tt.errStr == "" {
 				assert.NoError(t, e)
 				assert.Equal(t, tt.networkPassphrase, tt.config.CaptiveCoreTomlParams.NetworkPassphrase)
