@@ -758,15 +758,15 @@ func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 	config.CaptiveCoreTomlParams.NetworkPassphrase = config.NetworkPassphrase
 
 	var err error
-	if !options.RequireCaptiveCoreFullConfig {
-		// Creates a minimal captive-core config (without quorum information), just enough to run captive core.
-		// This is used by certain database commands, such as `reingest and fill-gaps, to reingest historical data.
-		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreToml(config.CaptiveCoreTomlParams)
+	if config.CaptiveCoreConfigPath != "" {
+		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreTomlFromFile(config.CaptiveCoreConfigPath, config.CaptiveCoreTomlParams)
 		if err != nil {
 			return errors.Wrap(err, "invalid captive core toml file")
 		}
-	} else if config.CaptiveCoreConfigPath != "" {
-		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreTomlFromFile(config.CaptiveCoreConfigPath, config.CaptiveCoreTomlParams)
+	} else if !options.RequireCaptiveCoreFullConfig {
+		// Creates a minimal captive-core config (without quorum information), just enough to run captive core.
+		// This is used by certain database commands, such as `reingest and fill-gaps, to reingest historical data.
+		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreToml(config.CaptiveCoreTomlParams)
 		if err != nil {
 			return errors.Wrap(err, "invalid captive core toml file")
 		}
