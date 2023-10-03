@@ -736,15 +736,6 @@ func getCaptiveCoreConfigFromNetworkParameter(config *Config) (networkConfig, er
 func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 	stdLog.Println("Preparing captive core...")
 
-	// If the user didn't specify a Stellar Core binary, we can check the
-	// $PATH and possibly fill it in for them.
-	if config.CaptiveCoreBinaryPath == "" {
-		var err error
-		if config.CaptiveCoreBinaryPath, err = getCaptiveCoreBinaryPath(); err != nil {
-			return fmt.Errorf("captive core requires %s", StellarCoreBinaryPathName)
-		}
-	}
-
 	var defaultNetworkConfig networkConfig
 	if config.Network != "" {
 		var err error
@@ -833,6 +824,15 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 		}
 
 		if config.EnableCaptiveCoreIngestion {
+			// If the user didn't specify a Stellar Core binary, we can check the
+			// $PATH and possibly fill it in for them.
+			if config.CaptiveCoreBinaryPath == "" {
+				var err error
+				if config.CaptiveCoreBinaryPath, err = getCaptiveCoreBinaryPath(); err != nil {
+					return fmt.Errorf("captive core requires %s", StellarCoreBinaryPathName)
+				}
+			}
+
 			err := setCaptiveCoreConfiguration(config, options)
 			if err != nil {
 				return errors.Wrap(err, "error generating captive core configuration")
