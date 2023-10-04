@@ -703,8 +703,7 @@ func getCaptiveCoreBinaryPath() (string, error) {
 	return result, nil
 }
 
-// getCaptiveCoreConfigFromNetworkParameter generates the default Captive Core configuration.
-// validates the configuration settings, sets default values
+// getCaptiveCoreConfigFromNetworkParameter returns the default Captive Core configuration based on the network.
 func getCaptiveCoreConfigFromNetworkParameter(config *Config) (networkConfig, error) {
 	var defaultNetworkConfig networkConfig
 
@@ -726,8 +725,6 @@ func getCaptiveCoreConfigFromNetworkParameter(config *Config) (networkConfig, er
 	default:
 		return defaultNetworkConfig, fmt.Errorf("no default configuration found for network %s", config.Network)
 	}
-	config.NetworkPassphrase = defaultNetworkConfig.NetworkPassphrase
-	config.HistoryArchiveURLs = defaultNetworkConfig.HistoryArchiveURLs
 
 	return defaultNetworkConfig, nil
 }
@@ -743,6 +740,8 @@ func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 		if err != nil {
 			return err
 		}
+		config.NetworkPassphrase = defaultNetworkConfig.NetworkPassphrase
+		config.HistoryArchiveURLs = defaultNetworkConfig.HistoryArchiveURLs
 	}
 
 	if config.NetworkPassphrase == "" {
@@ -759,7 +758,8 @@ func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 
 	var err error
 	if config.CaptiveCoreConfigPath != "" {
-		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreTomlFromFile(config.CaptiveCoreConfigPath, config.CaptiveCoreTomlParams)
+		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreTomlFromFile(config.CaptiveCoreConfigPath,
+			config.CaptiveCoreTomlParams)
 		if err != nil {
 			return errors.Wrap(err, "invalid captive core toml file")
 		}
@@ -771,7 +771,8 @@ func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 			return errors.Wrap(err, "invalid captive core toml file")
 		}
 	} else if len(defaultNetworkConfig.defaultConfig) != 0 {
-		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreTomlFromData(defaultNetworkConfig.defaultConfig, config.CaptiveCoreTomlParams)
+		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreTomlFromData(defaultNetworkConfig.defaultConfig,
+			config.CaptiveCoreTomlParams)
 		if err != nil {
 			return errors.Wrap(err, "invalid captive core toml file")
 		}

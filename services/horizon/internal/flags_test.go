@@ -71,11 +71,14 @@ func Test_createCaptiveCoreDefaultConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, e := getCaptiveCoreConfigFromNetworkParameter(&tt.config)
+			e := setCaptiveCoreConfiguration(&tt.config,
+				ApplyOptions{RequireCaptiveCoreFullConfig: true})
 			if tt.errStr == "" {
 				assert.NoError(t, e)
 				assert.Equal(t, tt.networkPassphrase, tt.config.NetworkPassphrase)
 				assert.Equal(t, tt.historyArchiveURLs, tt.config.HistoryArchiveURLs)
+				assert.Equal(t, tt.networkPassphrase, tt.config.CaptiveCoreTomlParams.NetworkPassphrase)
+				assert.Equal(t, tt.historyArchiveURLs, tt.config.CaptiveCoreTomlParams.HistoryArchiveURLs)
 			} else {
 				assert.Equal(t, tt.errStr, e.Error())
 			}
@@ -171,6 +174,8 @@ func Test_createCaptiveCoreConfig(t *testing.T) {
 				ApplyOptions{RequireCaptiveCoreFullConfig: tt.requireCaptiveCoreConfig})
 			if tt.errStr == "" {
 				assert.NoError(t, e)
+				assert.Equal(t, tt.networkPassphrase, tt.config.NetworkPassphrase)
+				assert.Equal(t, tt.historyArchiveURLs, tt.config.HistoryArchiveURLs)
 				assert.Equal(t, tt.networkPassphrase, tt.config.CaptiveCoreTomlParams.NetworkPassphrase)
 				assert.Equal(t, tt.historyArchiveURLs, tt.config.CaptiveCoreTomlParams.HistoryArchiveURLs)
 			} else {
