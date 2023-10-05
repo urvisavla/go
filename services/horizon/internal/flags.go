@@ -751,14 +751,14 @@ func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 		}
 		config.NetworkPassphrase = defaultNetworkConfig.NetworkPassphrase
 		config.HistoryArchiveURLs = defaultNetworkConfig.HistoryArchiveURLs
-	}
+	}  else {
+		if config.NetworkPassphrase == "" {
+			return fmt.Errorf("%s must be set", NetworkPassphraseFlagName)
+		}
 
-	if config.NetworkPassphrase == "" {
-		return fmt.Errorf("%s must be set", NetworkPassphraseFlagName)
-	}
-
-	if len(config.HistoryArchiveURLs) == 0 {
-		return fmt.Errorf("%s must be set", HistoryArchiveURLsFlagName)
+		if len(config.HistoryArchiveURLs) == 0 {
+			return fmt.Errorf("%s must be set", HistoryArchiveURLsFlagName)
+		}
 	}
 
 	config.CaptiveCoreTomlParams.CoreBinaryPath = config.CaptiveCoreBinaryPath
