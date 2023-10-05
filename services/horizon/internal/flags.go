@@ -751,7 +751,7 @@ func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 		}
 		config.NetworkPassphrase = defaultNetworkConfig.NetworkPassphrase
 		config.HistoryArchiveURLs = defaultNetworkConfig.HistoryArchiveURLs
-	}  else {
+	} else {
 		if config.NetworkPassphrase == "" {
 			return fmt.Errorf("%s must be set", NetworkPassphraseFlagName)
 		}
