@@ -1,6 +1,5 @@
--- +migrate Up
+-- +migrate Up notransaction
 
--- unused indices
 DROP INDEX IF EXISTS accounts_home_domain;
 DROP INDEX IF EXISTS accounts_inflation_destination;
 DROP INDEX IF EXISTS asset_by_issuer;
