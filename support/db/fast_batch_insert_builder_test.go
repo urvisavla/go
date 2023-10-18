@@ -63,7 +63,7 @@ func TestFastBatchInsertBuilder(t *testing.T) {
 	)
 	assert.Equal(t, true, insertBuilder.sealed)
 
-	assert.NoError(t, sess.Begin())
+	assert.NoError(t, sess.Begin(context.Background()))
 	assert.NoError(t, insertBuilder.Exec(context.Background(), sess, "people"))
 	assert.Equal(t, 2, insertBuilder.Len())
 	assert.Equal(t, true, insertBuilder.sealed)
