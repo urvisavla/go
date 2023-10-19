@@ -49,9 +49,10 @@ func TestProcessorRunnerRunHistoryArchiveIngestionGenesis(t *testing.T) {
 	q.MockQSigners.On("NewAccountSignersBatchInsertBuilder", maxBatchSize).
 		Return(mockAccountSignersBatchInsertBuilder).Once()
 
-	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder", maxBatchSize).
+	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder").
 		Return(&history.MockClaimableBalanceClaimantBatchInsertBuilder{}).Once()
-
+	q.MockQClaimableBalances.On("NewClaimableBalanceBatchInsertBuilder").
+		Return(&history.MockClaimableBalanceBatchInsertBuilder{}).Once()
 	q.MockQAssetStats.On("InsertAssetStats", ctx, []history.ExpAssetStat{}, 100000).
 		Return(nil)
 
@@ -116,9 +117,10 @@ func TestProcessorRunnerRunHistoryArchiveIngestionHistoryArchive(t *testing.T) {
 	mockAccountSignersBatchInsertBuilder.On("Exec", ctx).Return(nil).Once()
 	q.MockQSigners.On("NewAccountSignersBatchInsertBuilder", maxBatchSize).
 		Return(mockAccountSignersBatchInsertBuilder).Once()
-	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder", maxBatchSize).
+	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder").
 		Return(&history.MockClaimableBalanceClaimantBatchInsertBuilder{}).Once()
-
+	q.MockQClaimableBalances.On("NewClaimableBalanceBatchInsertBuilder").
+		Return(&history.MockClaimableBalanceBatchInsertBuilder{}).Once()
 	q.MockQAssetStats.On("InsertAssetStats", ctx, []history.ExpAssetStat{}, 100000).
 		Return(nil)
 
@@ -153,9 +155,10 @@ func TestProcessorRunnerRunHistoryArchiveIngestionProtocolVersionNotSupported(t 
 	defer mock.AssertExpectationsForObjects(t, mockAccountSignersBatchInsertBuilder)
 	q.MockQSigners.On("NewAccountSignersBatchInsertBuilder", maxBatchSize).
 		Return(mockAccountSignersBatchInsertBuilder).Once()
-	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder", maxBatchSize).
+	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder").
 		Return(&history.MockClaimableBalanceClaimantBatchInsertBuilder{}).Once()
-
+	q.MockQClaimableBalances.On("NewClaimableBalanceBatchInsertBuilder").
+		Return(&history.MockClaimableBalanceBatchInsertBuilder{}).Once()
 	q.MockQAssetStats.On("InsertAssetStats", ctx, []history.ExpAssetStat{}, 100000).
 		Return(nil)
 
@@ -186,8 +189,10 @@ func TestProcessorRunnerBuildChangeProcessor(t *testing.T) {
 	// Twice = checking ledgerSource and historyArchiveSource
 	q.MockQSigners.On("NewAccountSignersBatchInsertBuilder", maxBatchSize).
 		Return(&history.MockAccountSignersBatchInsertBuilder{}).Twice()
-	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder", maxBatchSize).
+	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder").
 		Return(&history.MockClaimableBalanceClaimantBatchInsertBuilder{}).Twice()
+	q.MockQClaimableBalances.On("NewClaimableBalanceBatchInsertBuilder").
+		Return(&history.MockClaimableBalanceBatchInsertBuilder{}).Twice()
 	runner := ProcessorRunner{
 		ctx:      ctx,
 		historyQ: q,
@@ -195,7 +200,7 @@ func TestProcessorRunnerBuildChangeProcessor(t *testing.T) {
 	}
 
 	stats := &ingest.StatsChangeProcessor{}
-	processor := buildChangeProcessor(runner.historyQ, stats, ledgerSource, 123)
+	processor := buildChangeProcessor(runner.historyQ, &db.MockSession{}, stats, ledgerSource, 123, "")
 	assert.IsType(t, &groupChangeProcessors{}, processor)
 
 	assert.IsType(t, &statsChangeProcessor{}, processor.processors[0])
@@ -216,7 +221,7 @@ func TestProcessorRunnerBuildChangeProcessor(t *testing.T) {
 		filters:  &MockFilters{},
 	}
 
-	processor = buildChangeProcessor(runner.historyQ, stats, historyArchiveSource, 456)
+	processor = buildChangeProcessor(runner.historyQ, &db.MockSession{}, stats, historyArchiveSource, 456, "")
 	assert.IsType(t, &groupChangeProcessors{}, processor)
 
 	assert.IsType(t, &statsChangeProcessor{}, processor.processors[0])
@@ -313,6 +318,12 @@ func TestProcessorRunnerWithFilterEnabled(t *testing.T) {
 	q.MockQTransactions.On("NewTransactionFilteredTmpBatchInsertBuilder").
 		Return(mockTransactionsFilteredTmpBatchInsertBuilder)
 
+	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder").
+		Return(&history.MockClaimableBalanceClaimantBatchInsertBuilder{}).Once()
+
+	q.MockQClaimableBalances.On("NewClaimableBalanceBatchInsertBuilder").
+		Return(&history.MockClaimableBalanceBatchInsertBuilder{}).Once()
+
 	q.On("DeleteTransactionsFilteredTmpOlderThan", ctx, mock.AnythingOfType("uint64")).
 		Return(int64(0), nil)
 
@@ -376,6 +387,12 @@ func TestProcessorRunnerRunAllProcessorsOnLedger(t *testing.T) {
 		ctx,
 		mockSession,
 	).Return(nil)
+
+	q.MockQClaimableBalances.On("NewClaimableBalanceClaimantBatchInsertBuilder").
+		Return(&history.MockClaimableBalanceClaimantBatchInsertBuilder{}).Once()
+
+	q.MockQClaimableBalances.On("NewClaimableBalanceBatchInsertBuilder").
+		Return(&history.MockClaimableBalanceBatchInsertBuilder{}).Once()
 
 	runner := ProcessorRunner{
 		ctx:      ctx,

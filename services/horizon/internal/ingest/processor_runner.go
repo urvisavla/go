@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/stellar/go/support/db"
 	"time"
 
 	"github.com/stellar/go/ingest"
@@ -109,6 +110,7 @@ func (s *ProcessorRunner) DisableMemoryStatsLogging() {
 
 func buildChangeProcessor(
 	historyQ history.IngestionQ,
+	session db.SessionInterface,
 	changeStats *ingest.StatsChangeProcessor,
 	source ingestionSource,
 	ledgerSequence uint32,
@@ -126,7 +128,7 @@ func buildChangeProcessor(
 		processors.NewAssetStatsProcessor(historyQ, useLedgerCache),
 		processors.NewSignersProcessor(historyQ, useLedgerCache),
 		processors.NewTrustLinesProcessor(historyQ),
-		processors.NewClaimableBalancesChangeProcessor(historyQ),
+		processors.NewClaimableBalancesChangeProcessor(historyQ, session),
 		processors.NewLiquidityPoolsChangeProcessor(historyQ, ledgerSequence),
 	})
 }
@@ -236,7 +238,14 @@ func (s *ProcessorRunner) RunHistoryArchiveIngestion(
 	bucketListHash xdr.Hash,
 ) (ingest.StatsChangeProcessorResults, error) {
 	changeStats := ingest.StatsChangeProcessor{}
-	changeProcessor := buildChangeProcessor(s.historyQ, &changeStats, historyArchiveSource, checkpointLedger)
+	changeProcessor := buildChangeProcessor(
+		s.historyQ,
+		s.session,
+		&changeStats,
+		historyArchiveSource,
+		checkpointLedger,
+		s.config.NetworkPassphrase,
+	)
 
 	if checkpointLedger == 1 {
 		if err := changeProcessor.ProcessChange(s.ctx, ingest.GenesisChange(s.config.NetworkPassphrase)); err != nil {
@@ -395,7 +404,14 @@ func (s *ProcessorRunner) RunAllProcessorsOnLedger(ledger xdr.LedgerCloseMeta) (
 		return
 	}
 
-	groupChangeProcessors := buildChangeProcessor(s.historyQ, &changeStatsProcessor, ledgerSource, ledger.LedgerSequence())
+	groupChangeProcessors := buildChangeProcessor(
+		s.historyQ,
+		s.session,
+		&changeStatsProcessor,
+		ledgerSource,
+		ledger.LedgerSequence(),
+		s.config.NetworkPassphrase,
+	)
 	err = s.runChangeProcessorOnLedger(groupChangeProcessors, ledger)
 	if err != nil {
 		return
