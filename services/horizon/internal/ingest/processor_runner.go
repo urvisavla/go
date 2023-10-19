@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/stellar/go/support/db"
 	"time"
 
 	"github.com/stellar/go/ingest"
@@ -88,6 +89,7 @@ type ProcessorRunner struct {
 
 	ctx                   context.Context
 	historyQ              history.IngestionQ
+	session               db.SessionInterface
 	historyAdapter        historyArchiveAdapterInterface
 	logMemoryStats        bool
 	filters               filters.Filters
@@ -108,6 +110,7 @@ func (s *ProcessorRunner) DisableMemoryStatsLogging() {
 
 func buildChangeProcessor(
 	historyQ history.IngestionQ,
+	session db.SessionInterface,
 	changeStats *ingest.StatsChangeProcessor,
 	source ingestionSource,
 	ledgerSequence uint32,
@@ -126,7 +129,7 @@ func buildChangeProcessor(
 		processors.NewAssetStatsProcessor(historyQ, networkPassphrase, useLedgerCache),
 		processors.NewSignersProcessor(historyQ, useLedgerCache),
 		processors.NewTrustLinesProcessor(historyQ),
-		processors.NewClaimableBalancesChangeProcessor(historyQ),
+		processors.NewClaimableBalancesChangeProcessor(historyQ, session),
 		processors.NewLiquidityPoolsChangeProcessor(historyQ, ledgerSequence),
 	})
 }
@@ -226,6 +229,7 @@ func (s *ProcessorRunner) RunHistoryArchiveIngestion(
 	changeStats := ingest.StatsChangeProcessor{}
 	changeProcessor := buildChangeProcessor(
 		s.historyQ,
+		s.session,
 		&changeStats,
 		historyArchiveSource,
 		checkpointLedger,
@@ -386,6 +390,7 @@ func (s *ProcessorRunner) RunAllProcessorsOnLedger(ledger xdr.LedgerCloseMeta) (
 
 	groupChangeProcessors := buildChangeProcessor(
 		s.historyQ,
+		s.session,
 		&changeStatsProcessor,
 		ledgerSource,
 		ledger.LedgerSequence(),
