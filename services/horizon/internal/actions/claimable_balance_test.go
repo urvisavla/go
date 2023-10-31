@@ -22,7 +22,9 @@ func TestGetClaimableBalanceByID(t *testing.T) {
 	q := &history.Q{tt.HorizonSession()}
 
 	tt.Assert.NoError(q.SessionInterface.BeginTx(&sql.TxOptions{}))
-	defer q.SessionInterface.Rollback()
+	defer func() {
+		_ = q.SessionInterface.Rollback()
+	}()
 
 	accountID := "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"
 	asset := xdr.MustNewCreditAsset("USD", accountID)
@@ -155,7 +157,9 @@ func TestGetClaimableBalances(t *testing.T) {
 	q := &history.Q{tt.HorizonSession()}
 
 	tt.Assert.NoError(q.SessionInterface.BeginTx(&sql.TxOptions{}))
-	defer q.SessionInterface.Rollback()
+	defer func() {
+		_ = q.SessionInterface.Rollback()
+	}()
 
 	entriesMeta := []struct {
 		id        xdr.Hash

@@ -12,7 +12,7 @@ import (
 type ClaimableBalanceBatchInsertBuilder interface {
 	Add(claimableBalance ClaimableBalance) error
 	Exec(ctx context.Context, session db.SessionInterface) error
-	Reset() error
+	Reset()
 }
 
 // ClaimableBalanceBatchInsertBuilder is a simple wrapper around db.FastBatchInsertBuilder
@@ -42,7 +42,6 @@ func (i *claimableBalanceBatchInsertBuilder) Exec(ctx context.Context, session d
 }
 
 // Reset clears out the current batch of claimable balances
-func (i *claimableBalanceBatchInsertBuilder) Reset() error {
+func (i *claimableBalanceBatchInsertBuilder) Reset() {
 	i.builder.Reset()
-	return nil
 }

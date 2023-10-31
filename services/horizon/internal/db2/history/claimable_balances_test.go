@@ -16,7 +16,9 @@ func TestRemoveClaimableBalance(t *testing.T) {
 	test.ResetHorizonDB(t, tt.HorizonDB)
 	q := &Q{tt.HorizonSession()}
 	tt.Assert.NoError(q.SessionInterface.BeginTx(&sql.TxOptions{}))
-	defer q.SessionInterface.Rollback()
+	defer func() {
+		_ = q.SessionInterface.Rollback()
+	}()
 
 	accountID := "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"
 	asset := xdr.MustNewCreditAsset("USD", accountID)
@@ -67,7 +69,9 @@ func TestRemoveClaimableBalanceClaimants(t *testing.T) {
 	test.ResetHorizonDB(t, tt.HorizonDB)
 	q := &Q{tt.HorizonSession()}
 	tt.Assert.NoError(q.SessionInterface.BeginTx(&sql.TxOptions{}))
-	defer q.SessionInterface.Rollback()
+	defer func() {
+		_ = q.SessionInterface.Rollback()
+	}()
 
 	accountID := "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"
 	asset := xdr.MustNewCreditAsset("USD", accountID)
@@ -119,7 +123,9 @@ func TestFindClaimableBalancesByDestination(t *testing.T) {
 	q := &Q{tt.HorizonSession()}
 
 	tt.Assert.NoError(q.SessionInterface.BeginTx(&sql.TxOptions{}))
-	defer q.SessionInterface.Rollback()
+	defer func() {
+		_ = q.SessionInterface.Rollback()
+	}()
 
 	dest1 := "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"
 	dest2 := "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
@@ -250,7 +256,9 @@ func TestFindClaimableBalance(t *testing.T) {
 	q := &Q{tt.HorizonSession()}
 
 	tt.Assert.NoError(q.SessionInterface.BeginTx(&sql.TxOptions{}))
-	defer q.SessionInterface.Rollback()
+	defer func() {
+		_ = q.SessionInterface.Rollback()
+	}()
 
 	accountID := "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"
 	asset := xdr.MustNewCreditAsset("USD", accountID)
@@ -298,7 +306,9 @@ func TestGetClaimableBalancesByID(t *testing.T) {
 	q := &Q{tt.HorizonSession()}
 
 	tt.Assert.NoError(q.SessionInterface.BeginTx(&sql.TxOptions{}))
-	defer q.SessionInterface.Rollback()
+	defer func() {
+		_ = q.SessionInterface.Rollback()
+	}()
 
 	accountID := "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"
 	asset := xdr.MustNewCreditAsset("USD", accountID)
