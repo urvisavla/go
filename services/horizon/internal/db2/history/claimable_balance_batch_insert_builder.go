@@ -36,11 +36,12 @@ func (i *claimableBalanceBatchInsertBuilder) Add(claimableBalance ClaimableBalan
 	return i.builder.RowStruct(claimableBalance)
 }
 
-// Exec inserts claimable balance rows to the database
+// Exec writes the batch of claimable balances to the database.
 func (i *claimableBalanceBatchInsertBuilder) Exec(ctx context.Context, session db.SessionInterface) error {
 	return i.builder.Exec(ctx, session, i.table)
 }
 
+// Reset clears out the current batch of claimable balances
 func (i *claimableBalanceBatchInsertBuilder) Reset() error {
 	i.builder.Reset()
 	return nil

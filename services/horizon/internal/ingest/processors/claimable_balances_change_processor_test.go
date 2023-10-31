@@ -8,7 +8,6 @@ import (
 
 	"github.com/guregu/null"
 	"github.com/stretchr/testify/suite"
-
 	"github.com/stellar/go/ingest"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/support/db"
@@ -182,7 +181,7 @@ func (s *ClaimableBalancesChangeProcessorTestSuiteLedger) TestNewClaimableBalanc
 		Ext: xdr.LedgerEntryExt{
 			V: 1,
 			V1: &xdr.LedgerEntryExtensionV1{
-				SponsoringId: nil,
+				SponsoringId: xdr.MustAddressPtr("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
 			},
 		},
 	}
@@ -199,6 +198,7 @@ func (s *ClaimableBalancesChangeProcessorTestSuiteLedger) TestNewClaimableBalanc
 			Asset:              cBalance.Asset,
 			Amount:             cBalance.Amount,
 			LastModifiedLedger: uint32(lastModifiedLedgerSeq),
+			Sponsor:            null.StringFrom("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
 		},
 	).Return(nil).Once()
 
@@ -208,42 +208,6 @@ func (s *ClaimableBalancesChangeProcessorTestSuiteLedger) TestNewClaimableBalanc
 		Post: &entry,
 	})
 	s.Assert().NoError(err)
-
-	// add sponsor
-	updated := xdr.LedgerEntry{
-		Data: xdr.LedgerEntryData{
-			Type:             xdr.LedgerEntryTypeClaimableBalance,
-			ClaimableBalance: &cBalance,
-		},
-		LastModifiedLedgerSeq: lastModifiedLedgerSeq,
-		Ext: xdr.LedgerEntryExt{
-			V: 1,
-			V1: &xdr.LedgerEntryExtensionV1{
-				SponsoringId: xdr.MustAddressPtr("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
-			},
-		},
-	}
-
-	entry.LastModifiedLedgerSeq = entry.LastModifiedLedgerSeq - 1
-	err = s.processor.ProcessChange(s.ctx, ingest.Change{
-		Type: xdr.LedgerEntryTypeClaimableBalance,
-		Pre:  &entry,
-		Post: &updated,
-	})
-	s.Assert().NoError(err)
-
-	// We use LedgerEntryChangesCache so all changes are squashed
-	s.mockClaimableBalanceBatchInsertBuilder.On(
-		"Add",
-		history.ClaimableBalance{
-			BalanceID:          id,
-			Claimants:          []history.Claimant{},
-			Asset:              cBalance.Asset,
-			Amount:             cBalance.Amount,
-			LastModifiedLedger: uint32(lastModifiedLedgerSeq),
-			Sponsor:            null.StringFrom("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
-		},
-	).Return(nil).Once()
 }
 
 func (s *ClaimableBalancesChangeProcessorTestSuiteLedger) TestRemoveClaimableBalance() {

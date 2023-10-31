@@ -21,7 +21,7 @@ func TestGetClaimableBalanceByID(t *testing.T) {
 	test.ResetHorizonDB(t, tt.HorizonDB)
 	q := &history.Q{tt.HorizonSession()}
 
-	q.SessionInterface.BeginTx(tt.Ctx, &sql.TxOptions{})
+	tt.Assert.NoError(q.SessionInterface.BeginTx(&sql.TxOptions{}))
 	defer q.SessionInterface.Rollback()
 
 	accountID := "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"
@@ -154,7 +154,7 @@ func TestGetClaimableBalances(t *testing.T) {
 	test.ResetHorizonDB(t, tt.HorizonDB)
 	q := &history.Q{tt.HorizonSession()}
 
-	q.SessionInterface.BeginTx(tt.Ctx, &sql.TxOptions{})
+	tt.Assert.NoError(q.SessionInterface.BeginTx(&sql.TxOptions{}))
 	defer q.SessionInterface.Rollback()
 
 	entriesMeta := []struct {
@@ -197,6 +197,7 @@ func TestGetClaimableBalances(t *testing.T) {
 	}
 
 	balanceInsertbuilder := q.NewClaimableBalanceBatchInsertBuilder()
+
 	claimantsInsertBuilder := q.NewClaimableBalanceClaimantBatchInsertBuilder()
 
 	for _, cBalance := range hCBs {
@@ -292,6 +293,7 @@ func TestGetClaimableBalances(t *testing.T) {
 	tt.Assert.NoError(err)
 	tt.Assert.Len(response, 0)
 
+	// new claimable balances are ingested, they should appear in the next pages
 	balanceInsertbuilder = q.NewClaimableBalanceBatchInsertBuilder()
 	claimantsInsertBuilder = q.NewClaimableBalanceClaimantBatchInsertBuilder()
 
@@ -315,13 +317,12 @@ func TestGetClaimableBalances(t *testing.T) {
 		},
 	}
 
-	hCBs = nil
 	for _, e := range entriesMeta {
 		entry := buildClaimableBalance(tt, e.id, e.accountID, e.ledger, e.asset)
 		hCBs = append(hCBs, entry)
 	}
 
-	for _, cBalance := range hCBs {
+	for _, cBalance := range hCBs[4:] {
 		tt.Assert.NoError(balanceInsertbuilder.Add(cBalance))
 
 		for _, claimant := range cBalance.Claimants {
@@ -361,7 +362,7 @@ func TestGetClaimableBalances(t *testing.T) {
 	tt.Assert.Len(response, 2)
 
 	// response should be the first 2 elements of entries
-	for i, entry := range hCBs {
+	for i, entry := range hCBs[4:] {
 		tt.Assert.Equal(entry.BalanceID, response[i].(protocol.ClaimableBalance).BalanceID)
 	}
 
@@ -392,7 +393,9 @@ func TestGetClaimableBalances(t *testing.T) {
 	tt.Assert.NoError(err)
 	tt.Assert.Len(response, 2)
 
-	tt.Assert.Equal(hCBs[1].BalanceID, response[0].(protocol.ClaimableBalance).BalanceID)
+	tt.Assert.Equal(hCBs[5].BalanceID, response[0].(protocol.ClaimableBalance).BalanceID)
+
+	tt.Assert.Equal(hCBs[4].BalanceID, response[1].(protocol.ClaimableBalance).BalanceID)
 
 	response, err = handler.GetResourcePage(httptest.NewRecorder(), makeRequest(
 		t,
@@ -407,6 +410,8 @@ func TestGetClaimableBalances(t *testing.T) {
 
 	tt.Assert.NoError(err)
 	tt.Assert.Len(response, 1)
+
+	tt.Assert.Equal(hCBs[0].BalanceID, response[0].(protocol.ClaimableBalance).BalanceID)
 
 	// filter by asset
 	response, err = handler.GetResourcePage(httptest.NewRecorder(), makeRequest(

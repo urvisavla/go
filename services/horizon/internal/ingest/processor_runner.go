@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/stellar/go/support/db"
 	"time"
 
 	"github.com/stellar/go/ingest"
@@ -244,7 +243,6 @@ func (s *ProcessorRunner) RunHistoryArchiveIngestion(
 		&changeStats,
 		historyArchiveSource,
 		checkpointLedger,
-		s.config.NetworkPassphrase,
 	)
 
 	if checkpointLedger == 1 {
@@ -410,7 +408,6 @@ func (s *ProcessorRunner) RunAllProcessorsOnLedger(ledger xdr.LedgerCloseMeta) (
 		&changeStatsProcessor,
 		ledgerSource,
 		ledger.LedgerSequence(),
-		s.config.NetworkPassphrase,
 	)
 	err = s.runChangeProcessorOnLedger(groupChangeProcessors, ledger)
 	if err != nil {

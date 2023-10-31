@@ -7,8 +7,8 @@ import (
 	"github.com/stellar/go/xdr"
 )
 
-// ClaimableBalanceClaimantBatchInsertBuilder is used to insert transactions into the
-// history_transactions table
+// ClaimableBalanceClaimantBatchInsertBuilder is used to insert claimants into the
+// claimable_balance_claimants table
 type ClaimableBalanceClaimantBatchInsertBuilder interface {
 	Add(claimableBalanceClaimant ClaimableBalanceClaimant) error
 	Exec(ctx context.Context, session db.SessionInterface) error
@@ -31,16 +31,17 @@ func (q *Q) NewClaimableBalanceClaimantBatchInsertBuilder() ClaimableBalanceClai
 	}
 }
 
-// Add adds a new claimant for a claimable Balance to the batch
+// Add adds a new claimant to the batch
 func (i *claimableBalanceClaimantBatchInsertBuilder) Add(claimableBalanceClaimant ClaimableBalanceClaimant) error {
 	return i.builder.RowStruct(claimableBalanceClaimant)
 }
 
-// Exec flushes the entire batch into the database
+// Exec writes the batch of claimants to the database.
 func (i *claimableBalanceClaimantBatchInsertBuilder) Exec(ctx context.Context, session db.SessionInterface) error {
 	return i.builder.Exec(ctx, session, i.table)
 }
 
+// Reset clears out the current batch of claimants
 func (i *claimableBalanceClaimantBatchInsertBuilder) Reset() error {
 	i.builder.Reset()
 	return nil
