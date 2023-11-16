@@ -523,10 +523,18 @@ func mockChangeProcessorBatchBuilders(q *mockDBQ, ctx context.Context, mockExec 
 	q.MockQOffers.On("NewOffersBatchInsertBuilder").
 		Return(mockOfferBatchInsertBuilder).Twice()
 
+	mockAccountDataBatchInsertBuilder := &history.MockAccountDataBatchInsertBuilder{}
+	if mockExec {
+		mockAccountDataBatchInsertBuilder.On("Exec", ctx).Return(nil).Once()
+	}
+	q.MockQData.On("NewAccountDataBatchInsertBuilder").
+		Return(mockAccountDataBatchInsertBuilder).Twice()
+
 	return []interface{}{mockAccountSignersBatchInsertBuilder,
 		mockClaimableBalanceBatchInsertBuilder,
 		mockClaimableBalanceClaimantBatchInsertBuilder,
 		mockLiquidityPoolBatchInsertBuilder,
 		mockOfferBatchInsertBuilder,
+		mockAccountDataBatchInsertBuilder,
 	}
 }
