@@ -535,7 +535,7 @@ func mockChangeProcessorBatchBuilders(q *mockDBQ, ctx context.Context, mockExec 
 	q.MockQData.On("NewAccountDataBatchInsertBuilder").
 		Return(mockAccountDataBatchInsertBuilder).Twice()
 
-  mockTrustLinesBatchInsertBuilder := &history.MockTrustLinesBatchInsertBuilder{}
+	mockTrustLinesBatchInsertBuilder := &history.MockTrustLinesBatchInsertBuilder{}
 	if mockExec {
 		mockTrustLinesBatchInsertBuilder.On("Exec", ctx).Return(nil).Once()
 	}
