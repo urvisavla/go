@@ -111,9 +111,21 @@ func buildChangeProcessor(
 	source ingestionSource,
 	ledgerSequence uint32,
 	networkPassphrase string,
+	skipSorobanIngestion bool,
 ) *groupChangeProcessors {
 	statsChangeProcessor := &statsChangeProcessor{
 		StatsChangeProcessor: changeStats,
+	}
+
+	var skipEntryType []xdr.LedgerEntryType
+
+	if skipSorobanIngestion {
+		skipEntryType = []xdr.LedgerEntryType{
+			xdr.LedgerEntryTypeContractData,
+			xdr.LedgerEntryTypeContractCode,
+			xdr.LedgerEntryTypeTtl,
+			xdr.LedgerEntryTypeConfigSetting,
+		}
 	}
 
 	useLedgerCache := source == ledgerSource
@@ -127,7 +139,7 @@ func buildChangeProcessor(
 		processors.NewTrustLinesProcessor(historyQ),
 		processors.NewClaimableBalancesChangeProcessor(historyQ),
 		processors.NewLiquidityPoolsChangeProcessor(historyQ, ledgerSequence),
-	})
+	}, skipEntryType)
 }
 
 func (s *ProcessorRunner) buildTransactionProcessor(ledgersProcessor *processors.LedgersProcessor) *groupTransactionProcessors {
@@ -142,11 +154,22 @@ func (s *ProcessorRunner) buildTransactionProcessor(ledgersProcessor *processors
 	tradeProcessor := processors.NewTradeProcessor(accountLoader,
 		lpLoader, assetLoader, s.historyQ.NewTradeBatchInsertBuilder())
 
+	var skipOperationType []xdr.OperationType
+
+	if s.config.SkipSorobanIngestion {
+		skipOperationType = []xdr.OperationType{
+			xdr.OperationTypeInvokeHostFunction,
+			xdr.OperationTypeExtendFootprintTtl,
+			xdr.OperationTypeRestoreFootprint,
+			xdr.OperationTypeExtendFootprintTtl,
+		}
+	}
+
 	processors := []horizonTransactionProcessor{
 		statsLedgerTransactionProcessor,
-		processors.NewEffectProcessor(accountLoader, s.historyQ.NewEffectBatchInsertBuilder(), s.config.NetworkPassphrase),
+		processors.NewEffectProcessor(accountLoader, s.historyQ.NewEffectBatchInsertBuilder(), s.config.NetworkPassphrase, skipOperationType),
 		ledgersProcessor,
-		processors.NewOperationProcessor(s.historyQ.NewOperationBatchInsertBuilder(), s.config.NetworkPassphrase),
+		processors.NewOperationProcessor(s.historyQ.NewOperationBatchInsertBuilder(), s.config.NetworkPassphrase, skipOperationType),
 		tradeProcessor,
 		processors.NewParticipantsProcessor(accountLoader,
 			s.historyQ.NewTransactionParticipantsBatchInsertBuilder(), s.historyQ.NewOperationParticipantBatchInsertBuilder()),
@@ -235,6 +258,7 @@ func (s *ProcessorRunner) RunHistoryArchiveIngestion(
 		historyArchiveSource,
 		checkpointLedger,
 		s.config.NetworkPassphrase,
+		s.config.SkipSorobanIngestion,
 	)
 
 	if checkpointLedger == 1 {
@@ -493,6 +517,7 @@ func (s *ProcessorRunner) RunAllProcessorsOnLedger(ledger xdr.LedgerCloseMeta) (
 		ledgerSource,
 		ledger.LedgerSequence(),
 		s.config.NetworkPassphrase,
+		s.config.SkipSorobanIngestion,
 	)
 	err = s.runChangeProcessorOnLedger(groupChangeProcessors, ledger)
 	if err != nil {

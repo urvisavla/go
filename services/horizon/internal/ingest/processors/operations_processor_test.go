@@ -42,6 +42,7 @@ func (s *OperationsProcessorTestSuiteLedger) SetupTest() {
 	s.processor = NewOperationProcessor(
 		s.mockBatchInsertBuilder,
 		"test network",
+		[]xdr.OperationType{},
 	)
 }
 
