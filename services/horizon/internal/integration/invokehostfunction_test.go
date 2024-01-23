@@ -377,22 +377,6 @@ func assembleInstallContractCodeOp(t *testing.T, sourceAccount string, wasmFileN
 	}
 }
 
-func verifyEmptySorobanMeta(t *testing.T, clientTx horizon.Transaction) {
-	if !DisabledSoroban {
-		return
-	}
-
-	var txMeta xdr.TransactionMeta
-	err := xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &txMeta)
-	require.NoError(t, err)
-
-	require.NotNil(t, txMeta.V3)
-	require.Empty(t, txMeta.V3.Operations)
-	require.Empty(t, txMeta.V3.TxChangesAfter)
-	require.Empty(t, txMeta.V3.TxChangesBefore)
-	require.Nil(t, txMeta.V3.SorobanMeta)
-}
-
 func assembleCreateContractOp(t *testing.T, sourceAccount string, wasmFileName string, contractSalt string, passPhrase string) *txnbuild.InvokeHostFunction {
 	// Assemble the InvokeHostFunction CreateContract operation:
 	// CAP-0047 - https://github.com/stellar/stellar-protocol/blob/master/core/cap-0047.md#creating-a-contract-using-invokehostfunctionop
