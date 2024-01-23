@@ -68,7 +68,7 @@ func (s *GroupChangeProcessorsTestSuiteLedger) SetupTest() {
 	s.processors = newGroupChangeProcessors([]horizonChangeProcessor{
 		s.processorA,
 		s.processorB,
-	}, []xdr.LedgerEntryType{})
+	})
 }
 
 func (s *GroupChangeProcessorsTestSuiteLedger) TearDownTest() {

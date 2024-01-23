@@ -21,25 +21,16 @@ func (d processorsRunDurations) AddRunDuration(name string, startTime time.Time)
 type groupChangeProcessors struct {
 	processors []horizonChangeProcessor
 	processorsRunDurations
-	skipEntryType []xdr.LedgerEntryType
 }
 
-func newGroupChangeProcessors(processors []horizonChangeProcessor, skipEntryType []xdr.LedgerEntryType) *groupChangeProcessors {
+func newGroupChangeProcessors(processors []horizonChangeProcessor) *groupChangeProcessors {
 	return &groupChangeProcessors{
 		processors:             processors,
 		processorsRunDurations: make(map[string]time.Duration),
-		skipEntryType:          skipEntryType,
 	}
 }
 
 func (g groupChangeProcessors) ProcessChange(ctx context.Context, change ingest.Change) error {
-
-	for _, op := range g.skipEntryType {
-		if op == change.Type {
-			return nil
-		}
-	}
-
 	for _, p := range g.processors {
 		startTime := time.Now()
 		if err := p.ProcessChange(ctx, change); err != nil {

@@ -111,21 +111,9 @@ func buildChangeProcessor(
 	source ingestionSource,
 	ledgerSequence uint32,
 	networkPassphrase string,
-	skipSorobanIngestion bool,
 ) *groupChangeProcessors {
 	statsChangeProcessor := &statsChangeProcessor{
 		StatsChangeProcessor: changeStats,
-	}
-
-	var skipEntryType []xdr.LedgerEntryType
-
-	if skipSorobanIngestion {
-		skipEntryType = []xdr.LedgerEntryType{
-			xdr.LedgerEntryTypeContractData,
-			xdr.LedgerEntryTypeContractCode,
-			xdr.LedgerEntryTypeTtl,
-			xdr.LedgerEntryTypeConfigSetting,
-		}
 	}
 
 	useLedgerCache := source == ledgerSource
@@ -139,7 +127,7 @@ func buildChangeProcessor(
 		processors.NewTrustLinesProcessor(historyQ),
 		processors.NewClaimableBalancesChangeProcessor(historyQ),
 		processors.NewLiquidityPoolsChangeProcessor(historyQ, ledgerSequence),
-	}, skipEntryType)
+	})
 }
 
 func (s *ProcessorRunner) buildTransactionProcessor(ledgersProcessor *processors.LedgersProcessor) *groupTransactionProcessors {
@@ -154,22 +142,11 @@ func (s *ProcessorRunner) buildTransactionProcessor(ledgersProcessor *processors
 	tradeProcessor := processors.NewTradeProcessor(accountLoader,
 		lpLoader, assetLoader, s.historyQ.NewTradeBatchInsertBuilder())
 
-	var skipOperationType []xdr.OperationType
-
-	if s.config.SkipSorobanIngestion {
-		skipOperationType = []xdr.OperationType{
-			xdr.OperationTypeInvokeHostFunction,
-			xdr.OperationTypeExtendFootprintTtl,
-			xdr.OperationTypeRestoreFootprint,
-			xdr.OperationTypeExtendFootprintTtl,
-		}
-	}
-
 	processors := []horizonTransactionProcessor{
 		statsLedgerTransactionProcessor,
-		processors.NewEffectProcessor(accountLoader, s.historyQ.NewEffectBatchInsertBuilder(), s.config.NetworkPassphrase, skipOperationType),
+		processors.NewEffectProcessor(accountLoader, s.historyQ.NewEffectBatchInsertBuilder(), s.config.NetworkPassphrase),
 		ledgersProcessor,
-		processors.NewOperationProcessor(s.historyQ.NewOperationBatchInsertBuilder(), s.config.NetworkPassphrase, skipOperationType),
+		processors.NewOperationProcessor(s.historyQ.NewOperationBatchInsertBuilder(), s.config.NetworkPassphrase),
 		tradeProcessor,
 		processors.NewParticipantsProcessor(accountLoader,
 			s.historyQ.NewTransactionParticipantsBatchInsertBuilder(), s.historyQ.NewOperationParticipantBatchInsertBuilder()),
@@ -258,7 +235,6 @@ func (s *ProcessorRunner) RunHistoryArchiveIngestion(
 		historyArchiveSource,
 		checkpointLedger,
 		s.config.NetworkPassphrase,
-		s.config.SkipSorobanIngestion,
 	)
 
 	if checkpointLedger == 1 {
@@ -504,6 +480,22 @@ func (s *ProcessorRunner) RunAllProcessorsOnLedger(ledger xdr.LedgerCloseMeta) (
 	stats ledgerStats,
 	err error,
 ) {
+	if s.config.SkipSorobanIngestion {
+		for txIndex := 0; txIndex < ledger.CountTransactions(); txIndex++ {
+			txMeta := &ledger.MustV1().TxProcessing[txIndex].TxApplyProcessing
+			if v3Meta, ok := txMeta.GetV3(); ok && v3Meta.SorobanMeta != nil {
+				// it's soroban, elide the tx meta, force empty meta into the xdr instead
+				txMeta.V3 = &xdr.TransactionMetaV3{
+					Ext:             xdr.ExtensionPoint{},
+					TxChangesBefore: xdr.LedgerEntryChanges{},
+					Operations:      []xdr.OperationMeta{},
+					TxChangesAfter:  xdr.LedgerEntryChanges{},
+					SorobanMeta:     nil,
+				}
+			}
+		}
+	}
+
 	changeStatsProcessor := ingest.StatsChangeProcessor{}
 
 	if err = s.checkIfProtocolVersionSupported(ledger.ProtocolVersion()); err != nil {
@@ -517,7 +509,6 @@ func (s *ProcessorRunner) RunAllProcessorsOnLedger(ledger xdr.LedgerCloseMeta) (
 		ledgerSource,
 		ledger.LedgerSequence(),
 		s.config.NetworkPassphrase,
-		s.config.SkipSorobanIngestion,
 	)
 	err = s.runChangeProcessorOnLedger(groupChangeProcessors, ledger)
 	if err != nil {

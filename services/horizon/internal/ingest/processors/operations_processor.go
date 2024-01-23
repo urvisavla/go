@@ -21,23 +21,19 @@ import (
 
 // OperationProcessor operations processor
 type OperationProcessor struct {
-	batch             history.OperationBatchInsertBuilder
-	network           string
-	skipOperationType []xdr.OperationType
+	batch   history.OperationBatchInsertBuilder
+	network string
 }
 
-func NewOperationProcessor(batch history.OperationBatchInsertBuilder, network string, skipOperationType []xdr.OperationType) *OperationProcessor {
+func NewOperationProcessor(batch history.OperationBatchInsertBuilder, network string) *OperationProcessor {
 	return &OperationProcessor{
-		batch:             batch,
-		network:           network,
-		skipOperationType: skipOperationType,
+		batch:   batch,
+		network: network,
 	}
 }
 
 // ProcessTransaction process the given transaction
 func (p *OperationProcessor) ProcessTransaction(lcm xdr.LedgerCloseMeta, transaction ingest.LedgerTransaction) error {
-
-OUTER:
 	for i, op := range transaction.Envelope.Operations() {
 		operation := transactionOperationWrapper{
 			index:          uint32(i),
@@ -46,12 +42,6 @@ OUTER:
 			ledgerSequence: lcm.LedgerSequence(),
 			network:        p.network,
 		}
-		for _, op := range p.skipOperationType {
-			if op == operation.OperationType() {
-				continue OUTER
-			}
-		}
-
 		details, err := operation.Details()
 		if err != nil {
 			return errors.Wrapf(err, "Error obtaining details for operation %v", operation.ID())
