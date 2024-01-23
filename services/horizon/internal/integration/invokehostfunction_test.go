@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stellar/go/clients/horizonclient"
+	"github.com/stellar/go/protocols/horizon"
 	"github.com/stellar/go/protocols/horizon/operations"
 	"github.com/stellar/go/services/horizon/internal/test/integration"
 	"github.com/stellar/go/txnbuild"
@@ -35,7 +36,7 @@ func TestInvokeHostFns(t *testing.T) {
 }
 
 func runAllTests(t *testing.T) {
-	t.Run("Soroabn Processing Enbabled", func(t *testing.T) {
+	t.Run(fmt.Sprintf("Soroban Processing Disabled = %v", DisabledSoroban), func(t *testing.T) {
 		CaseContractInvokeHostFunctionInstallContract(t)
 		CaseContractInvokeHostFunctionCreateContractByAddress(t)
 		CaseContractInvokeHostFunctionInvokeStatelessContractFn(t)
@@ -126,6 +127,10 @@ func CaseContractInvokeHostFunctionCreateContractByAddress(t *testing.T) {
 
 	clientTx, err := itest.Client().TransactionDetail(tx.Hash)
 	require.NoError(t, err)
+
+	if DisabledSoroban {
+		verifyEmptySorobanMeta(t, clientTx)
+	}
 
 	assert.Equal(t, tx.Hash, clientTx.Hash)
 	var txResult xdr.TransactionResult
@@ -241,6 +246,8 @@ func CaseContractInvokeHostFunctionInvokeStatelessContractFn(t *testing.T) {
 		var transactionMeta xdr.TransactionMeta
 		assert.NoError(t, xdr.SafeUnmarshalBase64(tx.ResultMetaXdr, &transactionMeta))
 		assert.True(t, expectedScVal.Equals(transactionMeta.V3.SorobanMeta.ReturnValue))
+	} else {
+		verifyEmptySorobanMeta(t, clientTx)
 	}
 
 	clientInvokeOp, err := itest.Client().Operations(horizonclient.OperationRequest{
@@ -341,6 +348,8 @@ func CaseContractInvokeHostFunctionInvokeStatefulContractFn(t *testing.T) {
 		var transactionMeta xdr.TransactionMeta
 		assert.NoError(t, xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &transactionMeta))
 		assert.True(t, expectedScVal.Equals(transactionMeta.V3.SorobanMeta.ReturnValue))
+	} else {
+		verifyEmptySorobanMeta(t, clientTx)
 	}
 
 	clientInvokeOp, err := itest.Client().Operations(horizonclient.OperationRequest{
@@ -414,4 +423,20 @@ func assembleCreateContractOp(t *testing.T, sourceAccount string, wasmFileName s
 		},
 		SourceAccount: sourceAccount,
 	}
+}
+
+func verifyEmptySorobanMeta(t *testing.T, clientTx horizon.Transaction) {
+	if !DisabledSoroban {
+		return
+	}
+
+	var txMeta xdr.TransactionMeta
+	err := xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &txMeta)
+	require.NoError(t, err)
+
+	require.NotNil(t, txMeta.V3)
+	require.Empty(t, txMeta.V3.Operations)
+	require.Empty(t, txMeta.V3.TxChangesAfter)
+	require.Empty(t, txMeta.V3.TxChangesBefore)
+	require.Nil(t, txMeta.V3.SorobanMeta)
 }

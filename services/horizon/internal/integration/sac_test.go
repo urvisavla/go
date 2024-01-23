@@ -37,7 +37,7 @@ var (
 
 func TestSAC(t *testing.T) {
 	// first test contracts when soroban processing is enabled
-	DisabledSoroban = true
+	DisabledSoroban = false
 	runAllSACTests(t)
 	// now test same contracts when soroban processing is disabled
 	DisabledSoroban = true
@@ -45,7 +45,7 @@ func TestSAC(t *testing.T) {
 }
 
 func runAllSACTests(t *testing.T) {
-	t.Run("Soroabn Processing Enbabled", func(t *testing.T) {
+	t.Run(fmt.Sprintf("Soroban Processing Disabled = %v", DisabledSoroban), func(t *testing.T) {
 		CaseContractMintToAccount(t)
 		CaseContractMintToContract(t)
 		CaseExpirationAndRestoration(t)
@@ -1514,16 +1514,18 @@ func assertInvokeHostFnSucceeds(itest *integration.Test, signer *keypair.Full, o
 	assert.True(itest.CurrentTest(), ok)
 	assert.Equal(itest.CurrentTest(), invokeHostFunctionResult.Code, xdr.InvokeHostFunctionResultCodeInvokeHostFunctionSuccess)
 
-	var returnValue xdr.ScVal
+	var returnValue *xdr.ScVal
 
 	if !DisabledSoroban {
 		var txMetaResult xdr.TransactionMeta
 		err = xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &txMetaResult)
 		require.NoError(itest.CurrentTest(), err)
-		returnValue = txMetaResult.MustV3().SorobanMeta.ReturnValue
+		returnValue = &txMetaResult.MustV3().SorobanMeta.ReturnValue
+	} else {
+		verifyEmptySorobanMeta(itest.CurrentTest(), clientTx)
 	}
 
-	return &returnValue, clientTx.Hash, &preFlightOp
+	return returnValue, clientTx.Hash, &preFlightOp
 }
 
 func stellarAssetContractID(itest *integration.Test, asset xdr.Asset) xdr.Hash {
