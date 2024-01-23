@@ -49,7 +49,7 @@ func CaseContractInvokeHostFunctionInstallContract(t *testing.T) {
 	}
 
 	itest := integration.NewTest(t, integration.Config{
-		ProtocolVersion:  20,
+		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
 			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
@@ -101,7 +101,7 @@ func CaseContractInvokeHostFunctionCreateContractByAddress(t *testing.T) {
 	}
 
 	itest := integration.NewTest(t, integration.Config{
-		ProtocolVersion:  20,
+		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
 			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
@@ -157,7 +157,7 @@ func CaseContractInvokeHostFunctionInvokeStatelessContractFn(t *testing.T) {
 	}
 
 	itest := integration.NewTest(t, integration.Config{
-		ProtocolVersion:  20,
+		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
 			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
@@ -270,7 +270,7 @@ func CaseContractInvokeHostFunctionInvokeStatefulContractFn(t *testing.T) {
 	}
 
 	itest := integration.NewTest(t, integration.Config{
-		ProtocolVersion:  20,
+		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
 			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
@@ -378,7 +378,7 @@ func assembleInstallContractCodeOp(t *testing.T, sourceAccount string, wasmFileN
 }
 
 func verifyEmptySorobanMeta(t *testing.T, clientTx horizon.Transaction) {
-    if !DisabledSoroban {
+	if !DisabledSoroban {
 		return
 	}
 
