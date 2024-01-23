@@ -3,6 +3,7 @@ package integration
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,13 +25,33 @@ const increment_contract = "soroban_increment_contract.wasm"
 // Refer to ./services/horizon/internal/integration/contracts/README.md on how to recompile
 // contract code if needed to new wasm.
 
-func TestContractInvokeHostFunctionInstallContract(t *testing.T) {
+func TestInvokeHostFns(t *testing.T) {
+	// first test contracts when soroban processing is enabled
+	DisabledSoroban = false
+	runAllTests(t)
+	// now test same contracts when soroban processing is disabled
+	DisabledSoroban = true
+	runAllTests(t)
+}
+
+func runAllTests(t *testing.T) {
+	t.Run("Soroabn Processing Enbabled", func(t *testing.T) {
+		CaseContractInvokeHostFunctionInstallContract(t)
+		CaseContractInvokeHostFunctionCreateContractByAddress(t)
+		CaseContractInvokeHostFunctionInvokeStatelessContractFn(t)
+		CaseContractInvokeHostFunctionInvokeStatefulContractFn(t)
+	})
+}
+
+func CaseContractInvokeHostFunctionInstallContract(t *testing.T) {
 	if integration.GetCoreMaxSupportedProtocol() < 20 {
 		t.Skip("This test run does not support less than Protocol 20")
 	}
 
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion:  20,
+		HorizonEnvironment: map[string]string{
+			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -74,13 +95,15 @@ func TestContractInvokeHostFunctionInstallContract(t *testing.T) {
 
 }
 
-func TestContractInvokeHostFunctionCreateContractByAddress(t *testing.T) {
+func CaseContractInvokeHostFunctionCreateContractByAddress(t *testing.T) {
 	if integration.GetCoreMaxSupportedProtocol() < 20 {
 		t.Skip("This test run does not support less than Protocol 20")
 	}
 
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion:  20,
+		HorizonEnvironment: map[string]string{
+			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -128,13 +151,15 @@ func TestContractInvokeHostFunctionCreateContractByAddress(t *testing.T) {
 	assert.Equal(t, invokeHostFunctionOpJson.Salt, "110986164698320180327942133831752629430491002266485370052238869825166557303060")
 }
 
-func TestContractInvokeHostFunctionInvokeStatelessContractFn(t *testing.T) {
+func CaseContractInvokeHostFunctionInvokeStatelessContractFn(t *testing.T) {
 	if integration.GetCoreMaxSupportedProtocol() < 20 {
 		t.Skip("This test run does not support less than Protocol 20")
 	}
 
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion:  20,
+		HorizonEnvironment: map[string]string{
+			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -209,12 +234,14 @@ func TestContractInvokeHostFunctionInvokeStatelessContractFn(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, invokeHostFunctionResult.Code, xdr.InvokeHostFunctionResultCodeInvokeHostFunctionSuccess)
 
-	// check the function response, should have summed the two input numbers
-	invokeResult := xdr.Uint64(9)
-	expectedScVal := xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &invokeResult}
-	var transactionMeta xdr.TransactionMeta
-	assert.NoError(t, xdr.SafeUnmarshalBase64(tx.ResultMetaXdr, &transactionMeta))
-	assert.True(t, expectedScVal.Equals(transactionMeta.V3.SorobanMeta.ReturnValue))
+	if !DisabledSoroban {
+		// check the function response, should have summed the two input numbers
+		invokeResult := xdr.Uint64(9)
+		expectedScVal := xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &invokeResult}
+		var transactionMeta xdr.TransactionMeta
+		assert.NoError(t, xdr.SafeUnmarshalBase64(tx.ResultMetaXdr, &transactionMeta))
+		assert.True(t, expectedScVal.Equals(transactionMeta.V3.SorobanMeta.ReturnValue))
+	}
 
 	clientInvokeOp, err := itest.Client().Operations(horizonclient.OperationRequest{
 		ForTransaction: tx.Hash,
@@ -237,13 +264,15 @@ func TestContractInvokeHostFunctionInvokeStatelessContractFn(t *testing.T) {
 	assert.Equal(t, invokeHostFunctionOpJson.Parameters[3].Type, "U64")
 }
 
-func TestContractInvokeHostFunctionInvokeStatefulContractFn(t *testing.T) {
+func CaseContractInvokeHostFunctionInvokeStatefulContractFn(t *testing.T) {
 	if integration.GetCoreMaxSupportedProtocol() < 20 {
 		t.Skip("This test run does not support less than Protocol 20")
 	}
 
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion:  20,
+		HorizonEnvironment: map[string]string{
+			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -305,12 +334,14 @@ func TestContractInvokeHostFunctionInvokeStatefulContractFn(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, invokeHostFunctionResult.Code, xdr.InvokeHostFunctionResultCodeInvokeHostFunctionSuccess)
 
-	// check the function response, should have incremented state from 0 to 1
-	invokeResult := xdr.Uint32(1)
-	expectedScVal := xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &invokeResult}
-	var transactionMeta xdr.TransactionMeta
-	assert.NoError(t, xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &transactionMeta))
-	assert.True(t, expectedScVal.Equals(transactionMeta.V3.SorobanMeta.ReturnValue))
+	if !DisabledSoroban {
+		// check the function response, should have incremented state from 0 to 1
+		invokeResult := xdr.Uint32(1)
+		expectedScVal := xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &invokeResult}
+		var transactionMeta xdr.TransactionMeta
+		assert.NoError(t, xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &transactionMeta))
+		assert.True(t, expectedScVal.Equals(transactionMeta.V3.SorobanMeta.ReturnValue))
+	}
 
 	clientInvokeOp, err := itest.Client().Operations(horizonclient.OperationRequest{
 		ForTransaction: tx.Hash,
@@ -344,6 +375,22 @@ func assembleInstallContractCodeOp(t *testing.T, sourceAccount string, wasmFileN
 		},
 		SourceAccount: sourceAccount,
 	}
+}
+
+func verifyEmptySorobanMeta(t *testing.T, clientTx horizon.Transaction) {
+    if !DisabledSoroban {
+		return
+	}
+
+	var txMeta xdr.TransactionMeta
+	err := xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &txMeta)
+	require.NoError(t, err)
+
+	require.NotNil(t, txMeta.V3)
+	require.Empty(t, txMeta.V3.Operations)
+	require.Empty(t, txMeta.V3.TxChangesAfter)
+	require.Empty(t, txMeta.V3.TxChangesBefore)
+	require.Nil(t, txMeta.V3.SorobanMeta)
 }
 
 func assembleCreateContractOp(t *testing.T, sourceAccount string, wasmFileName string, contractSalt string, passPhrase string) *txnbuild.InvokeHostFunction {
