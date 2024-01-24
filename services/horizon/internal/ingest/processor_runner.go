@@ -111,6 +111,7 @@ func buildChangeProcessor(
 	source ingestionSource,
 	ledgerSequence uint32,
 	networkPassphrase string,
+	skipSorobanIngestion bool,
 ) *groupChangeProcessors {
 	statsChangeProcessor := &statsChangeProcessor{
 		StatsChangeProcessor: changeStats,
@@ -139,12 +140,23 @@ func (s *ProcessorRunner) buildTransactionProcessor(ledgersProcessor *processors
 	lazyLoaders := []horizonLazyLoader{accountLoader, assetLoader, lpLoader, cbLoader}
 	statsLedgerTransactionProcessor := processors.NewStatsLedgerTransactionProcessor()
 
+	var skipOperationType []xdr.OperationType
+
+	if s.config.SkipSorobanIngestion {
+		skipOperationType = []xdr.OperationType{
+			xdr.OperationTypeInvokeHostFunction,
+			xdr.OperationTypeExtendFootprintTtl,
+			xdr.OperationTypeRestoreFootprint,
+			xdr.OperationTypeExtendFootprintTtl,
+		}
+	}
+
 	tradeProcessor := processors.NewTradeProcessor(accountLoader,
 		lpLoader, assetLoader, s.historyQ.NewTradeBatchInsertBuilder())
 
 	processors := []horizonTransactionProcessor{
 		statsLedgerTransactionProcessor,
-		processors.NewEffectProcessor(accountLoader, s.historyQ.NewEffectBatchInsertBuilder(), s.config.NetworkPassphrase),
+		processors.NewEffectProcessor(accountLoader, s.historyQ.NewEffectBatchInsertBuilder(), s.config.NetworkPassphrase, skipOperationType),
 		ledgersProcessor,
 		processors.NewOperationProcessor(s.historyQ.NewOperationBatchInsertBuilder(), s.config.NetworkPassphrase),
 		tradeProcessor,
@@ -235,6 +247,7 @@ func (s *ProcessorRunner) RunHistoryArchiveIngestion(
 		historyArchiveSource,
 		checkpointLedger,
 		s.config.NetworkPassphrase,
+		s.config.SkipSorobanIngestion,
 	)
 
 	if checkpointLedger == 1 {
@@ -493,6 +506,7 @@ func (s *ProcessorRunner) RunAllProcessorsOnLedger(ledger xdr.LedgerCloseMeta) (
 		ledgerSource,
 		ledger.LedgerSequence(),
 		s.config.NetworkPassphrase,
+		s.config.SkipSorobanIngestion,
 	)
 	err = s.runChangeProcessorOnLedger(groupChangeProcessors, ledger)
 	if err != nil {

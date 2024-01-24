@@ -25,20 +25,23 @@ import (
 
 // EffectProcessor process effects
 type EffectProcessor struct {
-	accountLoader *history.AccountLoader
-	batch         history.EffectBatchInsertBuilder
-	network       string
+	accountLoader     *history.AccountLoader
+	batch             history.EffectBatchInsertBuilder
+	network           string
+	skipOperationType []xdr.OperationType
 }
 
 func NewEffectProcessor(
 	accountLoader *history.AccountLoader,
 	batch history.EffectBatchInsertBuilder,
 	network string,
+	skipOperationType []xdr.OperationType,
 ) *EffectProcessor {
 	return &EffectProcessor{
-		accountLoader: accountLoader,
-		batch:         batch,
-		network:       network,
+		accountLoader:     accountLoader,
+		batch:             batch,
+		network:           network,
+		skipOperationType: skipOperationType,
 	}
 }
 
@@ -50,6 +53,7 @@ func (p *EffectProcessor) ProcessTransaction(
 		return nil
 	}
 
+OUTER:
 	for opi, op := range transaction.Envelope.Operations() {
 		operation := transactionOperationWrapper{
 			index:          uint32(opi),
@@ -58,6 +62,13 @@ func (p *EffectProcessor) ProcessTransaction(
 			ledgerSequence: uint32(lcm.LedgerSequence()),
 			network:        p.network,
 		}
+
+		for _, op := range p.skipOperationType {
+			if op == operation.OperationType() {
+				continue OUTER
+			}
+		}
+
 		if err := operation.ingestEffects(p.accountLoader, p.batch); err != nil {
 			return errors.Wrapf(err, "reading operation %v effects", operation.ID())
 		}
