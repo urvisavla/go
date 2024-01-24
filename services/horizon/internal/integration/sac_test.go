@@ -45,18 +45,27 @@ func TestSAC(t *testing.T) {
 }
 
 func runAllSACTests(t *testing.T) {
-	t.Run(fmt.Sprintf("Soroban Processing Disabled = %v", DisabledSoroban), func(t *testing.T) {
-		CaseContractMintToAccount(t)
-		CaseContractMintToContract(t)
-		CaseExpirationAndRestoration(t)
-		CaseContractTransferBetweenAccounts(t)
-		CaseContractTransferBetweenAccountAndContract(t)
-		CaseContractTransferBetweenContracts(t)
-		CaseContractBurnFromAccount(t)
-		CaseContractBurnFromContract(t)
-		CaseContractClawbackFromAccount(t)
-		CaseContractClawbackFromContract(t)
-	})
+	tests := []struct {
+		name string
+		fn   func(*testing.T)
+	}{
+		{"CaseContractMintToAccount", CaseContractMintToAccount},
+		{"CaseContractMintToContract", CaseContractMintToContract},
+		{"CaseExpirationAndRestoration", CaseExpirationAndRestoration},
+		{"CaseContractTransferBetweenAccounts", CaseContractTransferBetweenAccounts},
+		{"CaseContractTransferBetweenAccountAndContract", CaseContractTransferBetweenAccountAndContract},
+		{"CaseContractTransferBetweenContracts", CaseContractTransferBetweenContracts},
+		{"CaseContractBurnFromAccount", CaseContractBurnFromAccount},
+		{"CaseContractBurnFromContract", CaseContractBurnFromContract},
+		{"CaseContractClawbackFromAccount", CaseContractClawbackFromAccount},
+		{"CaseContractClawbackFromContract", CaseContractClawbackFromContract},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("Soroban Processing Disabled = %v. ", DisabledSoroban)+tt.name, func(t *testing.T) {
+			tt.fn(t)
+		})
+	}
 }
 
 // Tests use precompiled wasm bin files that are added to the testdata directory.

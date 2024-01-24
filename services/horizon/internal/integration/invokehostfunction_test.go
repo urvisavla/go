@@ -36,12 +36,21 @@ func TestInvokeHostFns(t *testing.T) {
 }
 
 func runAllTests(t *testing.T) {
-	t.Run(fmt.Sprintf("Soroban Processing Disabled = %v", DisabledSoroban), func(t *testing.T) {
-		CaseContractInvokeHostFunctionInstallContract(t)
-		CaseContractInvokeHostFunctionCreateContractByAddress(t)
-		CaseContractInvokeHostFunctionInvokeStatelessContractFn(t)
-		CaseContractInvokeHostFunctionInvokeStatefulContractFn(t)
-	})
+	tests := []struct {
+		name string
+		fn   func(*testing.T)
+	}{
+		{"CaseContractInvokeHostFunctionInstallContract", CaseContractInvokeHostFunctionInstallContract},
+		{"CaseContractInvokeHostFunctionCreateContractByAddress", CaseContractInvokeHostFunctionCreateContractByAddress},
+		{"CaseContractInvokeHostFunctionInvokeStatelessContractFn", CaseContractInvokeHostFunctionInvokeStatelessContractFn},
+		{"CaseContractInvokeHostFunctionInvokeStatefulContractFn", CaseContractInvokeHostFunctionInvokeStatefulContractFn},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("Soroban Processing Disabled = %v. ", DisabledSoroban)+tt.name, func(t *testing.T) {
+			tt.fn(t)
+		})
+	}
 }
 
 func CaseContractInvokeHostFunctionInstallContract(t *testing.T) {
