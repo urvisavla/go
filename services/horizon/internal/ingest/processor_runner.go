@@ -480,22 +480,6 @@ func (s *ProcessorRunner) RunAllProcessorsOnLedger(ledger xdr.LedgerCloseMeta) (
 	stats ledgerStats,
 	err error,
 ) {
-	if s.config.SkipSorobanIngestion {
-		for txIndex := 0; txIndex < ledger.CountTransactions(); txIndex++ {
-			txMeta := &ledger.MustV1().TxProcessing[txIndex].TxApplyProcessing
-			if v3Meta, ok := txMeta.GetV3(); ok && v3Meta.SorobanMeta != nil {
-				// it's soroban, elide the tx meta, force empty meta into the xdr instead
-				txMeta.V3 = &xdr.TransactionMetaV3{
-					Ext:             xdr.ExtensionPoint{},
-					TxChangesBefore: xdr.LedgerEntryChanges{},
-					Operations:      []xdr.OperationMeta{},
-					TxChangesAfter:  xdr.LedgerEntryChanges{},
-					SorobanMeta:     nil,
-				}
-			}
-		}
-	}
-
 	changeStatsProcessor := ingest.StatsChangeProcessor{}
 
 	if err = s.checkIfProtocolVersionSupported(ledger.ProtocolVersion()); err != nil {
