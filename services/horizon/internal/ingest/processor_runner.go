@@ -147,7 +147,6 @@ func (s *ProcessorRunner) buildTransactionProcessor(ledgersProcessor *processors
 			xdr.OperationTypeInvokeHostFunction,
 			xdr.OperationTypeExtendFootprintTtl,
 			xdr.OperationTypeRestoreFootprint,
-			xdr.OperationTypeExtendFootprintTtl,
 		}
 	}
 
