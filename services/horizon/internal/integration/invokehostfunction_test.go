@@ -61,7 +61,7 @@ func CaseContractInvokeHostFunctionInstallContract(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -113,7 +113,7 @@ func CaseContractInvokeHostFunctionCreateContractByAddress(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -170,7 +170,7 @@ func CaseContractInvokeHostFunctionInvokeStatelessContractFn(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -284,7 +284,7 @@ func CaseContractInvokeHostFunctionInvokeStatefulContractFn(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 

@@ -270,7 +270,7 @@ func (operation *transactionOperationWrapper) IsPayment() bool {
 		return true
 	case xdr.OperationTypeInvokeHostFunction:
 		// #5175, may want to consider skipping this parsing of payment from contracts
-		// as part of eliding soroban ingestion aspects when DISABLE_SOROBAN_INGEST_PROCESSORS.
+		// as part of eliding soroban ingestion aspects when DISABLE_SOROBAN_INGEST.
 		// but, may cause inconsistencies that aren't worth the gain,
 		// as payments won't be thoroughly accurate, i.e. a payment could have
 		// happened within a contract invoke.
@@ -699,14 +699,14 @@ func (operation *transactionOperationWrapper) Details() (map[string]interface{},
 
 			var balanceChanges []map[string]interface{}
 			var parseErr error
-			if !operation.skipSorobanDetails {
+			if operation.skipSorobanDetails {
+                // https://github.com/stellar/go/issues/5175
+				// intentionally toggle off parsing soroban meta into "asset_balance_changes"
+				balanceChanges = make([]map[string]interface{}, 0)
+			} else {
 				if balanceChanges, parseErr = operation.parseAssetBalanceChangesFromContractEvents(); parseErr != nil {
 					return nil, parseErr
 				}
-			} else {
-				// https://github.com/stellar/go/issues/5175
-				// intentionally toggle off parsing soroban meta into "asset_balance_changes"
-				balanceChanges = make([]map[string]interface{}, 0)
 			}
 			details["asset_balance_changes"] = balanceChanges
 

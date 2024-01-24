@@ -149,7 +149,7 @@ func CaseContractMintToAccount(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban),
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban),
 		},
 		EnableSorobanRPC: true,
 	})
@@ -240,7 +240,7 @@ func CaseContractMintToContract(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -338,7 +338,7 @@ func CaseExpirationAndRestoration(t *testing.T) {
 			// a fake asset contract in the horizon db and we don't
 			// want state verification to detect this
 			"ingest-disable-state-verification": "true",
-			"disable-soroban-ingest-processors": fmt.Sprint(DisabledSoroban),
+			"disable-soroban-ingest": fmt.Sprint(DisabledSoroban),
 		},
 	})
 
@@ -579,7 +579,7 @@ func CaseContractTransferBetweenAccounts(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -662,7 +662,7 @@ func CaseContractTransferBetweenAccountAndContract(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -800,7 +800,7 @@ func CaseContractTransferBetweenContracts(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -891,7 +891,7 @@ func CaseContractBurnFromAccount(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -975,7 +975,7 @@ func CaseContractBurnFromContract(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -1050,7 +1050,7 @@ func CaseContractClawbackFromAccount(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 
@@ -1136,7 +1136,7 @@ func CaseContractClawbackFromContract(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST": fmt.Sprint(DisabledSoroban)},
 		EnableSorobanRPC: true,
 	})
 

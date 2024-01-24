@@ -57,7 +57,7 @@ func (p *EffectProcessor) ProcessTransaction(
 
 	if p.skipSoroban &&
 		elidedTransaction.UnsafeMeta.V == 3 &&
-		elidedTransaction.UnsafeMeta.MustV3().SorobanMeta != nil {
+		elidedTransaction.UnsafeMeta.V3.SorobanMeta != nil {
 		elidedTransaction.UnsafeMeta.V3 = &xdr.TransactionMetaV3{
 			Ext:             xdr.ExtensionPoint{},
 			TxChangesBefore: xdr.LedgerEntryChanges{},
