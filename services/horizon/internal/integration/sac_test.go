@@ -170,20 +170,20 @@ func CaseContractMintToAccount(t *testing.T) {
 	)
 
 	assertContainsBalance(itest, recipientKp, issuer, code, amount.MustParse("20"))
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              1,
+		balanceAccounts:          amount.MustParse("20"),
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             0,
+		balanceContracts:         big.NewInt(0),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
+	assertEventPayments(itest, mintTx, asset, "", recipient.GetAccountID(), "mint", "20.0000000")
 
 	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              1,
-			balanceAccounts:          amount.MustParse("20"),
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             0,
-			balanceContracts:         big.NewInt(0),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-
 		fx := getTxEffects(itest, mintTx, asset)
 		require.Len(t, fx, 1)
 		creditEffect := assertContainsEffect(t, fx,
@@ -192,7 +192,6 @@ func CaseContractMintToAccount(t *testing.T) {
 		assert.Equal(t, issuer, creditEffect.Asset.Issuer)
 		assert.Equal(t, code, creditEffect.Asset.Code)
 		assert.Equal(t, "20.0000000", creditEffect.Amount)
-		assertEventPayments(itest, mintTx, asset, "", recipient.GetAccountID(), "mint", "20.0000000")
 	} else {
 		fx := getTxEffects(itest, mintTx, asset)
 		require.Len(t, fx, 0)
@@ -209,6 +208,17 @@ func CaseContractMintToAccount(t *testing.T) {
 	)
 	assertContainsBalance(itest, recipientKp, issuer, code, amount.MustParse("20"))
 	assertContainsBalance(itest, otherRecipientKp, issuer, code, amount.MustParse("30"))
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              2,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		balanceAccounts:          amount.MustParse("50"),
+		numContracts:             0,
+		balanceContracts:         big.NewInt(0),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
 
 	if !DisabledSoroban {
 		fx := getTxEffects(itest, transferTx, asset)
@@ -216,17 +226,6 @@ func CaseContractMintToAccount(t *testing.T) {
 		assertContainsEffect(t, fx,
 			effects.EffectAccountCredited,
 			effects.EffectAccountDebited)
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              2,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			balanceAccounts:          amount.MustParse("50"),
-			numContracts:             0,
-			balanceContracts:         big.NewInt(0),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
 	} else {
 		fx := getTxEffects(itest, transferTx, asset)
 		require.Len(t, fx, 0)
@@ -267,6 +266,8 @@ func CaseContractMintToContract(t *testing.T) {
 			contractAddressParam(recipientContractID)),
 	)
 
+	assertEventPayments(itest, mintTx, asset, "", strkeyRecipientContractID, "mint", amount.String128(mintAmount))
+
 	if !DisabledSoroban {
 		assertContainsEffect(t, getTxEffects(itest, mintTx, asset),
 			effects.EffectContractCredited)
@@ -279,7 +280,6 @@ func CaseContractMintToContract(t *testing.T) {
 		assert.Equal(itest.CurrentTest(), xdr.ScValTypeScvI128, balanceAmount.Type)
 		assert.Equal(itest.CurrentTest(), xdr.Uint64(math.MaxUint64-3), (*balanceAmount.I128).Lo)
 		assert.Equal(itest.CurrentTest(), xdr.Int64(math.MaxInt64), (*balanceAmount.I128).Hi)
-		assertEventPayments(itest, mintTx, asset, "", strkeyRecipientContractID, "mint", amount.String128(mintAmount))
 	} else {
 		fx := getTxEffects(itest, mintTx, asset)
 		require.Len(t, fx, 0)
@@ -290,6 +290,21 @@ func CaseContractMintToContract(t *testing.T) {
 		itest.Master(),
 		transferWithAmount(itest, issuer, asset, i128Param(0, 3), contractAddressParam(recipientContractID)),
 	)
+
+	// 2^127 - 1
+	balanceContracts := new(big.Int).Lsh(big.NewInt(1), 127)
+	balanceContracts.Sub(balanceContracts, big.NewInt(1))
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             1,
+		balanceContracts:         balanceContracts,
+		contractID:               stellarAssetContractID(itest, asset),
+	})
 
 	if !DisabledSoroban {
 		assertContainsEffect(t, getTxEffects(itest, transferTx, asset),
@@ -304,21 +319,6 @@ func CaseContractMintToContract(t *testing.T) {
 		assert.Equal(itest.CurrentTest(), xdr.ScValTypeScvI128, balanceAmount.Type)
 		assert.Equal(itest.CurrentTest(), xdr.Uint64(math.MaxUint64), (*balanceAmount.I128).Lo)
 		assert.Equal(itest.CurrentTest(), xdr.Int64(math.MaxInt64), (*balanceAmount.I128).Hi)
-
-		// 2^127 - 1
-		balanceContracts := new(big.Int).Lsh(big.NewInt(1), 127)
-		balanceContracts.Sub(balanceContracts, big.NewInt(1))
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             1,
-			balanceContracts:         balanceContracts,
-			contractID:               stellarAssetContractID(itest, asset),
-		})
 	} else {
 		fx := getTxEffects(itest, transferTx, asset)
 		require.Len(t, fx, 0)
@@ -402,19 +402,17 @@ func CaseExpirationAndRestoration(t *testing.T) {
 	)
 	itest.MustSubmitOperationsWithFee(&sourceAccount, itest.Master(), minFee+txnbuild.MinBaseFee, &extendTTLOp)
 
-	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             1,
-			balanceContracts:         big.NewInt(23),
-			contractID:               storeContractID,
-		})
-	}
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             1,
+		balanceContracts:         big.NewInt(23),
+		contractID:               storeContractID,
+	})
 
 	// create balance which we will expire
 	balanceToExpire := processors.BalanceToContractData(
@@ -441,36 +439,34 @@ func CaseExpirationAndRestoration(t *testing.T) {
 		},
 	}
 
-	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             2,
-			balanceContracts:         big.NewInt(60),
-			contractID:               storeContractID,
-		})
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             2,
+		balanceContracts:         big.NewInt(60),
+		contractID:               storeContractID,
+	})
 
-		// The TESTING_MINIMUM_PERSISTENT_ENTRY_LIFETIME=10 configuration in stellar-core
-		// will ensure that the ledger entry expires after 10 ledgers.
-		// Because ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING is set to true, 10 ledgers
-		// should elapse in 10 seconds
-		itest.WaitUntilLedgerEntryTTL(balanceToExpireLedgerKey)
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(37),
-			numArchivedContracts:     1,
-			numContracts:             1,
-			balanceContracts:         big.NewInt(23),
-			contractID:               storeContractID,
-		})
-	}
+	// The TESTING_MINIMUM_PERSISTENT_ENTRY_LIFETIME=10 configuration in stellar-core
+	// will ensure that the ledger entry expires after 10 ledgers.
+	// Because ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING is set to true, 10 ledgers
+	// should elapse in 10 seconds
+	itest.WaitUntilLedgerEntryTTL(balanceToExpireLedgerKey)
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(37),
+		numArchivedContracts:     1,
+		numContracts:             1,
+		balanceContracts:         big.NewInt(23),
+		contractID:               storeContractID,
+	})
 
 	// increase active balance from 23 to 50
 	assertInvokeHostFnSucceeds(
@@ -487,19 +483,17 @@ func CaseExpirationAndRestoration(t *testing.T) {
 		),
 	)
 
-	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(37),
-			numArchivedContracts:     1,
-			numContracts:             1,
-			balanceContracts:         big.NewInt(50),
-			contractID:               storeContractID,
-		})
-	}
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(37),
+		numArchivedContracts:     1,
+		numContracts:             1,
+		balanceContracts:         big.NewInt(50),
+		contractID:               storeContractID,
+	})
 
 	// restore expired balance
 	sourceAccount, restoreFootprint, minFee := itest.RestoreFootprint(
@@ -508,19 +502,17 @@ func CaseExpirationAndRestoration(t *testing.T) {
 	)
 	itest.MustSubmitOperationsWithFee(&sourceAccount, itest.Master(), minFee+txnbuild.MinBaseFee, &restoreFootprint)
 
-	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             2,
-			balanceContracts:         big.NewInt(87),
-			contractID:               storeContractID,
-		})
-	}
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             2,
+		balanceContracts:         big.NewInt(87),
+		contractID:               storeContractID,
+	})
 
 	// expire the balance again
 	itest.WaitUntilLedgerEntryTTL(balanceToExpireLedgerKey)
@@ -540,19 +532,17 @@ func CaseExpirationAndRestoration(t *testing.T) {
 		),
 	)
 
-	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(37),
-			numArchivedContracts:     1,
-			numContracts:             1,
-			balanceContracts:         big.NewInt(3),
-			contractID:               storeContractID,
-		})
-	}
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(37),
+		numArchivedContracts:     1,
+		numContracts:             1,
+		balanceContracts:         big.NewInt(3),
+		contractID:               storeContractID,
+	})
 
 	// remove active balance
 	assertInvokeHostFnSucceeds(
@@ -568,19 +558,17 @@ func CaseExpirationAndRestoration(t *testing.T) {
 		),
 	)
 
-	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(37),
-			numArchivedContracts:     1,
-			numContracts:             0,
-			balanceContracts:         big.NewInt(0),
-			contractID:               storeContractID,
-		})
-	}
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(37),
+		numArchivedContracts:     1,
+		numContracts:             0,
+		balanceContracts:         big.NewInt(0),
+		contractID:               storeContractID,
+	})
 }
 
 func CaseContractTransferBetweenAccounts(t *testing.T) {
@@ -620,19 +608,17 @@ func CaseContractTransferBetweenAccounts(t *testing.T) {
 
 	assertContainsBalance(itest, recipientKp, issuer, code, amount.MustParse("1000"))
 
-	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              1,
-			balanceAccounts:          amount.MustParse("1000"),
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             0,
-			balanceContracts:         big.NewInt(0),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-	}
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              1,
+		balanceAccounts:          amount.MustParse("1000"),
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             0,
+		balanceContracts:         big.NewInt(0),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
 
 	otherRecipientKp, otherRecipient := itest.CreateAccount("100")
 	itest.MustEstablishTrustline(otherRecipientKp, otherRecipient, txnbuild.MustAssetFromXDR(asset))
@@ -645,23 +631,23 @@ func CaseContractTransferBetweenAccounts(t *testing.T) {
 
 	assertContainsBalance(itest, recipientKp, issuer, code, amount.MustParse("970"))
 	assertContainsBalance(itest, otherRecipientKp, issuer, code, amount.MustParse("30"))
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              2,
+		balanceAccounts:          amount.MustParse("1000"),
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             0,
+		balanceContracts:         big.NewInt(0),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
+	assertEventPayments(itest, transferTx, asset, recipientKp.Address(), otherRecipient.GetAccountID(), "transfer", "30.0000000")
 
 	if !DisabledSoroban {
 		fx := getTxEffects(itest, transferTx, asset)
 		assert.NotEmpty(t, fx)
 		assertContainsEffect(t, fx, effects.EffectAccountCredited, effects.EffectAccountDebited)
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              2,
-			balanceAccounts:          amount.MustParse("1000"),
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             0,
-			balanceContracts:         big.NewInt(0),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-		assertEventPayments(itest, transferTx, asset, recipientKp.Address(), otherRecipient.GetAccountID(), "transfer", "30.0000000")
 	} else {
 		fx := getTxEffects(itest, transferTx, asset)
 		require.Len(t, fx, 0)
@@ -722,22 +708,21 @@ func CaseContractTransferBetweenAccountAndContract(t *testing.T) {
 		mint(itest, issuer, asset, "1000", contractAddressParam(recipientContractID)),
 	)
 	assertContainsBalance(itest, recipientKp, issuer, code, amount.MustParse("1000"))
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              1,
+		balanceAccounts:          amount.MustParse("1000"),
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             1,
+		balanceContracts:         big.NewInt(int64(amount.MustParse("1000"))),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
 
 	if !DisabledSoroban {
 		assertContainsEffect(t, getTxEffects(itest, mintTx, asset),
 			effects.EffectContractCredited)
-
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              1,
-			balanceAccounts:          amount.MustParse("1000"),
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             1,
-			balanceContracts:         big.NewInt(int64(amount.MustParse("1000"))),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
 	} else {
 		fx := getTxEffects(itest, mintTx, asset)
 		require.Len(t, fx, 0)
@@ -750,22 +735,22 @@ func CaseContractTransferBetweenAccountAndContract(t *testing.T) {
 		transfer(itest, recipientKp.Address(), asset, "30", contractAddressParam(recipientContractID)),
 	)
 	assertContainsBalance(itest, recipientKp, issuer, code, amount.MustParse("970"))
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              1,
+		balanceAccounts:          amount.MustParse("970"),
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             1,
+		balanceContracts:         big.NewInt(int64(amount.MustParse("1030"))),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
+	assertEventPayments(itest, transferTx, asset, recipientKp.Address(), strkeyRecipientContractID, "transfer", "30.0000000")
 
 	if !DisabledSoroban {
 		assertContainsEffect(t, getTxEffects(itest, transferTx, asset),
 			effects.EffectAccountDebited, effects.EffectContractCredited)
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              1,
-			balanceAccounts:          amount.MustParse("970"),
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             1,
-			balanceContracts:         big.NewInt(int64(amount.MustParse("1030"))),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-		assertEventPayments(itest, transferTx, asset, recipientKp.Address(), strkeyRecipientContractID, "transfer", "30.0000000")
 	} else {
 		fx := getTxEffects(itest, transferTx, asset)
 		require.Len(t, fx, 0)
@@ -777,12 +762,6 @@ func CaseContractTransferBetweenAccountAndContract(t *testing.T) {
 		transferFromContract(itest, recipientKp.Address(), asset, recipientContractID, recipientContractHash, "500", accountAddressParam(recipient.GetAccountID())),
 	)
 	assertContainsBalance(itest, recipientKp, issuer, code, amount.MustParse("1470"))
-
-	if DisabledSoroban {
-		return
-	}
-	assertContainsEffect(t, getTxEffects(itest, transferTx, asset),
-		effects.EffectContractDebited, effects.EffectAccountCredited)
 	assertAssetStats(itest, assetStats{
 		code:                     code,
 		issuer:                   issuer,
@@ -796,6 +775,13 @@ func CaseContractTransferBetweenAccountAndContract(t *testing.T) {
 	})
 	assertEventPayments(itest, transferTx, asset, strkeyRecipientContractID, recipientKp.Address(), "transfer", "500.0000000")
 
+	if DisabledSoroban {
+		fx := getTxEffects(itest, transferTx, asset)
+		require.Len(t, fx, 0)
+		return
+	}
+	assertContainsEffect(t, getTxEffects(itest, transferTx, asset),
+		effects.EffectContractDebited, effects.EffectAccountCredited)
 	balanceAmount, _, _ := assertInvokeHostFnSucceeds(
 		itest,
 		itest.Master(),
@@ -855,12 +841,27 @@ func CaseContractTransferBetweenContracts(t *testing.T) {
 		transferFromContract(itest, issuer, asset, emitterContractID, emitterContractHash, "10", contractAddressParam(recipientContractID)),
 	)
 
-	if DisabledSoroban {
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             2,
+		balanceContracts:         big.NewInt(int64(amount.MustParse("1000"))),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
+	assertEventPayments(itest, transferTx, asset, strkeyEmitterContractID, strkeyRecipientContractID, "transfer", "10.0000000")
+
+	if !DisabledSoroban {
+		assertContainsEffect(t, getTxEffects(itest, transferTx, asset),
+			effects.EffectContractCredited, effects.EffectContractDebited)
+	} else {
+		fx := getTxEffects(itest, transferTx, asset)
+		require.Len(t, fx, 0)
 		return
 	}
-
-	assertContainsEffect(t, getTxEffects(itest, transferTx, asset),
-		effects.EffectContractCredited, effects.EffectContractDebited)
 
 	// Check balances of emitter and recipient
 	emitterBalanceAmount, _, _ := assertInvokeHostFnSucceeds(
@@ -880,19 +881,6 @@ func CaseContractTransferBetweenContracts(t *testing.T) {
 	assert.Equal(itest.CurrentTest(), xdr.ScValTypeScvI128, recipientBalanceAmount.Type)
 	assert.Equal(itest.CurrentTest(), xdr.Uint64(100000000), (*recipientBalanceAmount.I128).Lo)
 	assert.Equal(itest.CurrentTest(), xdr.Int64(0), (*recipientBalanceAmount.I128).Hi)
-
-	assertAssetStats(itest, assetStats{
-		code:                     code,
-		issuer:                   issuer,
-		numAccounts:              0,
-		balanceAccounts:          0,
-		balanceArchivedContracts: big.NewInt(0),
-		numArchivedContracts:     0,
-		numContracts:             2,
-		balanceContracts:         big.NewInt(int64(amount.MustParse("1000"))),
-		contractID:               stellarAssetContractID(itest, asset),
-	})
-	assertEventPayments(itest, transferTx, asset, strkeyEmitterContractID, strkeyRecipientContractID, "transfer", "10.0000000")
 }
 
 func CaseContractBurnFromAccount(t *testing.T) {
@@ -931,25 +919,36 @@ func CaseContractBurnFromAccount(t *testing.T) {
 	)
 
 	assertContainsBalance(itest, recipientKp, issuer, code, amount.MustParse("1000"))
-	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              1,
-			balanceAccounts:          amount.MustParse("1000"),
-			numContracts:             0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			balanceContracts:         big.NewInt(0),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-	}
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              1,
+		balanceAccounts:          amount.MustParse("1000"),
+		numContracts:             0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		balanceContracts:         big.NewInt(0),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
 
 	_, burnTx, _ := assertInvokeHostFnSucceeds(
 		itest,
 		recipientKp,
 		burn(itest, recipientKp.Address(), asset, "500"),
 	)
+
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              1,
+		balanceAccounts:          amount.MustParse("500"),
+		numContracts:             0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		balanceContracts:         big.NewInt(0),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
+	assertEventPayments(itest, burnTx, asset, recipientKp.Address(), "", "burn", "500.0000000")
 
 	if !DisabledSoroban {
 		fx := getTxEffects(itest, burnTx, asset)
@@ -962,18 +961,6 @@ func CaseContractBurnFromAccount(t *testing.T) {
 		assert.Equal(t, code, burnEffect.Asset.Code)
 		assert.Equal(t, "500.0000000", burnEffect.Amount)
 		assert.Equal(t, recipientKp.Address(), burnEffect.Account)
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              1,
-			balanceAccounts:          amount.MustParse("500"),
-			numContracts:             0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			balanceContracts:         big.NewInt(0),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-		assertEventPayments(itest, burnTx, asset, recipientKp.Address(), "", "burn", "500.0000000")
 	} else {
 		fx := getTxEffects(itest, burnTx, asset)
 		require.Len(t, fx, 0)
@@ -1023,6 +1010,19 @@ func CaseContractBurnFromContract(t *testing.T) {
 		burnSelf(itest, issuer, asset, recipientContractID, recipientContractHash, "10"),
 	)
 
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             1,
+		balanceContracts:         big.NewInt(int64(amount.MustParse("990"))),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
+	assertEventPayments(itest, burnTx, asset, strkeyRecipientContractID, "", "burn", "10.0000000")
+
 	if !DisabledSoroban {
 		balanceAmount, _, _ := assertInvokeHostFnSucceeds(
 			itest,
@@ -1036,19 +1036,6 @@ func CaseContractBurnFromContract(t *testing.T) {
 
 		assertContainsEffect(t, getTxEffects(itest, burnTx, asset),
 			effects.EffectContractDebited)
-
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             1,
-			balanceContracts:         big.NewInt(int64(amount.MustParse("990"))),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-		assertEventPayments(itest, burnTx, asset, strkeyRecipientContractID, "", "burn", "10.0000000")
 	} else {
 		fx := getTxEffects(itest, burnTx, asset)
 		require.Len(t, fx, 0)
@@ -1102,19 +1089,17 @@ func CaseContractClawbackFromAccount(t *testing.T) {
 
 	assertContainsBalance(itest, recipientKp, issuer, code, amount.MustParse("1000"))
 
-	if !DisabledSoroban {
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              1,
-			balanceAccounts:          amount.MustParse("1000"),
-			numContracts:             0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			balanceContracts:         big.NewInt(0),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-	}
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              1,
+		balanceAccounts:          amount.MustParse("1000"),
+		numContracts:             0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		balanceContracts:         big.NewInt(0),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
 
 	_, clawTx, _ := assertInvokeHostFnSucceeds(
 		itest,
@@ -1122,21 +1107,21 @@ func CaseContractClawbackFromAccount(t *testing.T) {
 		clawback(itest, issuer, asset, "1000", accountAddressParam(recipientKp.Address())),
 	)
 	assertContainsBalance(itest, recipientKp, issuer, code, 0)
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              1,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             0,
+		balanceContracts:         big.NewInt(0),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
+	assertEventPayments(itest, clawTx, asset, recipientKp.Address(), "", "clawback", "1000.0000000")
 
 	if !DisabledSoroban {
 		assertContainsEffect(t, getTxEffects(itest, clawTx, asset), effects.EffectAccountDebited)
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              1,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             0,
-			balanceContracts:         big.NewInt(0),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-		assertEventPayments(itest, clawTx, asset, recipientKp.Address(), "", "clawback", "1000.0000000")
 	} else {
 		fx := getTxEffects(itest, clawTx, asset)
 		require.Len(t, fx, 0)
@@ -1189,6 +1174,18 @@ func CaseContractClawbackFromContract(t *testing.T) {
 		itest.Master(),
 		clawback(itest, issuer, asset, "10", contractAddressParam(recipientContractID)),
 	)
+	assertAssetStats(itest, assetStats{
+		code:                     code,
+		issuer:                   issuer,
+		numAccounts:              0,
+		balanceAccounts:          0,
+		balanceArchivedContracts: big.NewInt(0),
+		numArchivedContracts:     0,
+		numContracts:             1,
+		balanceContracts:         big.NewInt(int64(amount.MustParse("990"))),
+		contractID:               stellarAssetContractID(itest, asset),
+	})
+	assertEventPayments(itest, clawTx, asset, strkeyRecipientContractID, "", "clawback", "10.0000000")
 
 	if !DisabledSoroban {
 		balanceAmount, _, _ := assertInvokeHostFnSucceeds(
@@ -1202,19 +1199,6 @@ func CaseContractClawbackFromContract(t *testing.T) {
 
 		assertContainsEffect(t, getTxEffects(itest, clawTx, asset),
 			effects.EffectContractDebited)
-
-		assertAssetStats(itest, assetStats{
-			code:                     code,
-			issuer:                   issuer,
-			numAccounts:              0,
-			balanceAccounts:          0,
-			balanceArchivedContracts: big.NewInt(0),
-			numArchivedContracts:     0,
-			numContracts:             1,
-			balanceContracts:         big.NewInt(int64(amount.MustParse("990"))),
-			contractID:               stellarAssetContractID(itest, asset),
-		})
-		assertEventPayments(itest, clawTx, asset, strkeyRecipientContractID, "", "clawback", "10.0000000")
 	} else {
 		fx := getTxEffects(itest, clawTx, asset)
 		require.Len(t, fx, 0)
@@ -1329,6 +1313,12 @@ func assertEventPayments(itest *integration.Test, txHash string, asset xdr.Asset
 
 	invokeHostFn := ops.Embedded.Records[0].(operations.InvokeHostFunction)
 	assert.Equal(itest.CurrentTest(), invokeHostFn.Function, "HostFunctionTypeHostFunctionTypeInvokeContract")
+
+	if DisabledSoroban {
+		require.Equal(itest.CurrentTest(), 0, len(invokeHostFn.AssetBalanceChanges))
+		return
+	}
+
 	require.Equal(itest.CurrentTest(), 1, len(invokeHostFn.AssetBalanceChanges))
 	assetBalanceChange := invokeHostFn.AssetBalanceChanges[0]
 	assert.Equal(itest.CurrentTest(), assetBalanceChange.Amount, amount)
@@ -1565,7 +1555,7 @@ func assertInvokeHostFnSucceeds(itest *integration.Test, signer *keypair.Full, o
 		require.NoError(itest.CurrentTest(), err)
 		returnValue = &txMetaResult.MustV3().SorobanMeta.ReturnValue
 	} else {
-		verifyEmptySorobanMeta(itest.CurrentTest(), clientTx)
+		verifySorobanMeta(itest.CurrentTest(), clientTx)
 	}
 
 	return returnValue, clientTx.Hash, &preFlightOp
