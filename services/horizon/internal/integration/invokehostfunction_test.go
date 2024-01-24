@@ -137,6 +137,10 @@ func CaseContractInvokeHostFunctionCreateContractByAddress(t *testing.T) {
 	clientTx, err := itest.Client().TransactionDetail(tx.Hash)
 	require.NoError(t, err)
 
+	if DisabledSoroban {
+		verifyEmptySorobanMeta(t, clientTx)
+	}
+
 	assert.Equal(t, tx.Hash, clientTx.Hash)
 	var txResult xdr.TransactionResult
 	err = xdr.SafeUnmarshalBase64(clientTx.ResultXdr, &txResult)
@@ -251,6 +255,8 @@ func CaseContractInvokeHostFunctionInvokeStatelessContractFn(t *testing.T) {
 		var transactionMeta xdr.TransactionMeta
 		assert.NoError(t, xdr.SafeUnmarshalBase64(tx.ResultMetaXdr, &transactionMeta))
 		assert.True(t, expectedScVal.Equals(transactionMeta.V3.SorobanMeta.ReturnValue))
+	} else {
+		verifyEmptySorobanMeta(t, clientTx)
 	}
 
 	clientInvokeOp, err := itest.Client().Operations(horizonclient.OperationRequest{
@@ -351,6 +357,8 @@ func CaseContractInvokeHostFunctionInvokeStatefulContractFn(t *testing.T) {
 		var transactionMeta xdr.TransactionMeta
 		assert.NoError(t, xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &transactionMeta))
 		assert.True(t, expectedScVal.Equals(transactionMeta.V3.SorobanMeta.ReturnValue))
+	} else {
+		verifyEmptySorobanMeta(t, clientTx)
 	}
 
 	clientInvokeOp, err := itest.Client().Operations(horizonclient.OperationRequest{

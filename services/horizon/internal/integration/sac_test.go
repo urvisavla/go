@@ -1538,8 +1538,7 @@ func assertInvokeHostFnSucceeds(itest *integration.Test, signer *keypair.Full, o
 		require.NoError(itest.CurrentTest(), err)
 		returnValue = &txMetaResult.MustV3().SorobanMeta.ReturnValue
 	} else {
-		//TODO, uncomment when tx processor can elide tx meta
-		//verifyEmptySorobanMeta(itest.CurrentTest(), clientTx)
+		verifyEmptySorobanMeta(itest.CurrentTest(), clientTx)
 	}
 
 	return returnValue, clientTx.Hash, &preFlightOp
