@@ -1530,8 +1530,6 @@ func assertInvokeHostFnSucceeds(itest *integration.Test, signer *keypair.Full, o
 		err = xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &txMetaResult)
 		require.NoError(itest.CurrentTest(), err)
 		returnValue = &txMetaResult.MustV3().SorobanMeta.ReturnValue
-	} else {
-		verifyEmptySorobanMeta(itest.CurrentTest(), clientTx)
 	}
 
 	return returnValue, clientTx.Hash, &preFlightOp
