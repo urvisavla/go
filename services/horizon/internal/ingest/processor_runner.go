@@ -140,22 +140,12 @@ func (s *ProcessorRunner) buildTransactionProcessor(ledgersProcessor *processors
 	lazyLoaders := []horizonLazyLoader{accountLoader, assetLoader, lpLoader, cbLoader}
 	statsLedgerTransactionProcessor := processors.NewStatsLedgerTransactionProcessor()
 
-	var skipOperationType []xdr.OperationType
-
-	if s.config.SkipSorobanIngestion {
-		skipOperationType = []xdr.OperationType{
-			xdr.OperationTypeInvokeHostFunction,
-			xdr.OperationTypeExtendFootprintTtl,
-			xdr.OperationTypeRestoreFootprint,
-		}
-	}
-
 	tradeProcessor := processors.NewTradeProcessor(accountLoader,
 		lpLoader, assetLoader, s.historyQ.NewTradeBatchInsertBuilder())
 
 	processors := []horizonTransactionProcessor{
 		statsLedgerTransactionProcessor,
-		processors.NewEffectProcessor(accountLoader, s.historyQ.NewEffectBatchInsertBuilder(), s.config.NetworkPassphrase, skipOperationType),
+		processors.NewEffectProcessor(accountLoader, s.historyQ.NewEffectBatchInsertBuilder(), s.config.NetworkPassphrase, s.config.SkipSorobanIngestion),
 		ledgersProcessor,
 		processors.NewOperationProcessor(s.historyQ.NewOperationBatchInsertBuilder(), s.config.NetworkPassphrase),
 		tradeProcessor,

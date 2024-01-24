@@ -149,7 +149,8 @@ func CaseContractMintToAccount(t *testing.T) {
 	itest := integration.NewTest(t, integration.Config{
 		ProtocolVersion: 20,
 		HorizonEnvironment: map[string]string{
-			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban)},
+			"DISABLE_SOROBAN_INGEST_PROCESSORS": fmt.Sprint(DisabledSoroban),
+		},
 		EnableSorobanRPC: true,
 	})
 
@@ -192,6 +193,9 @@ func CaseContractMintToAccount(t *testing.T) {
 		assert.Equal(t, code, creditEffect.Asset.Code)
 		assert.Equal(t, "20.0000000", creditEffect.Amount)
 		assertEventPayments(itest, mintTx, asset, "", recipient.GetAccountID(), "mint", "20.0000000")
+	} else {
+		fx := getTxEffects(itest, mintTx, asset)
+		require.Len(t, fx, 0)
 	}
 
 	otherRecipientKp, otherRecipient := itest.CreateAccount("100")
@@ -223,6 +227,9 @@ func CaseContractMintToAccount(t *testing.T) {
 			balanceContracts:         big.NewInt(0),
 			contractID:               stellarAssetContractID(itest, asset),
 		})
+	} else {
+		fx := getTxEffects(itest, transferTx, asset)
+		require.Len(t, fx, 0)
 	}
 }
 
@@ -1530,6 +1537,9 @@ func assertInvokeHostFnSucceeds(itest *integration.Test, signer *keypair.Full, o
 		err = xdr.SafeUnmarshalBase64(clientTx.ResultMetaXdr, &txMetaResult)
 		require.NoError(itest.CurrentTest(), err)
 		returnValue = &txMetaResult.MustV3().SorobanMeta.ReturnValue
+	} else {
+		//TODO, uncomment when tx processor can elide tx meta
+		//verifyEmptySorobanMeta(itest.CurrentTest(), clientTx)
 	}
 
 	return returnValue, clientTx.Hash, &preFlightOp

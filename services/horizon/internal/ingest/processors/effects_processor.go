@@ -25,23 +25,23 @@ import (
 
 // EffectProcessor process effects
 type EffectProcessor struct {
-	accountLoader     *history.AccountLoader
-	batch             history.EffectBatchInsertBuilder
-	network           string
-	skipOperationType []xdr.OperationType
+	accountLoader *history.AccountLoader
+	batch         history.EffectBatchInsertBuilder
+	network       string
+	skipSoroban   bool
 }
 
 func NewEffectProcessor(
 	accountLoader *history.AccountLoader,
 	batch history.EffectBatchInsertBuilder,
 	network string,
-	skipOperationType []xdr.OperationType,
+	skipSoroban bool,
 ) *EffectProcessor {
 	return &EffectProcessor{
-		accountLoader:     accountLoader,
-		batch:             batch,
-		network:           network,
-		skipOperationType: skipOperationType,
+		accountLoader: accountLoader,
+		batch:         batch,
+		network:       network,
+		skipSoroban:   skipSoroban,
 	}
 }
 
@@ -53,20 +53,27 @@ func (p *EffectProcessor) ProcessTransaction(
 		return nil
 	}
 
-OUTER:
-	for opi, op := range transaction.Envelope.Operations() {
+	elidedTransaction := transaction
+
+	if p.skipSoroban &&
+		elidedTransaction.UnsafeMeta.V == 3 &&
+		elidedTransaction.UnsafeMeta.MustV3().SorobanMeta != nil {
+		elidedTransaction.UnsafeMeta.V3 = &xdr.TransactionMetaV3{
+			Ext:             xdr.ExtensionPoint{},
+			TxChangesBefore: xdr.LedgerEntryChanges{},
+			Operations:      []xdr.OperationMeta{},
+			TxChangesAfter:  xdr.LedgerEntryChanges{},
+			SorobanMeta:     nil,
+		}
+	}
+
+	for opi, op := range elidedTransaction.Envelope.Operations() {
 		operation := transactionOperationWrapper{
 			index:          uint32(opi),
-			transaction:    transaction,
+			transaction:    elidedTransaction,
 			operation:      op,
 			ledgerSequence: uint32(lcm.LedgerSequence()),
 			network:        p.network,
-		}
-
-		for _, op := range p.skipOperationType {
-			if op == operation.OperationType() {
-				continue OUTER
-			}
 		}
 
 		if err := operation.ingestEffects(p.accountLoader, p.batch); err != nil {
