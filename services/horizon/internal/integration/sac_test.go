@@ -280,6 +280,9 @@ func CaseContractMintToContract(t *testing.T) {
 		assert.Equal(itest.CurrentTest(), xdr.Uint64(math.MaxUint64-3), (*balanceAmount.I128).Lo)
 		assert.Equal(itest.CurrentTest(), xdr.Int64(math.MaxInt64), (*balanceAmount.I128).Hi)
 		assertEventPayments(itest, mintTx, asset, "", strkeyRecipientContractID, "mint", amount.String128(mintAmount))
+	} else {
+		fx := getTxEffects(itest, mintTx, asset)
+		require.Len(t, fx, 0)
 	}
 	// calling transfer from the issuer account will also mint the asset
 	_, transferTx, _ := assertInvokeHostFnSucceeds(
@@ -316,6 +319,9 @@ func CaseContractMintToContract(t *testing.T) {
 			balanceContracts:         balanceContracts,
 			contractID:               stellarAssetContractID(itest, asset),
 		})
+	} else {
+		fx := getTxEffects(itest, transferTx, asset)
+		require.Len(t, fx, 0)
 	}
 }
 
@@ -656,6 +662,9 @@ func CaseContractTransferBetweenAccounts(t *testing.T) {
 			contractID:               stellarAssetContractID(itest, asset),
 		})
 		assertEventPayments(itest, transferTx, asset, recipientKp.Address(), otherRecipient.GetAccountID(), "transfer", "30.0000000")
+	} else {
+		fx := getTxEffects(itest, transferTx, asset)
+		require.Len(t, fx, 0)
 	}
 }
 
@@ -729,6 +738,9 @@ func CaseContractTransferBetweenAccountAndContract(t *testing.T) {
 			balanceContracts:         big.NewInt(int64(amount.MustParse("1000"))),
 			contractID:               stellarAssetContractID(itest, asset),
 		})
+	} else {
+		fx := getTxEffects(itest, mintTx, asset)
+		require.Len(t, fx, 0)
 	}
 
 	// transfer from account to contract
@@ -754,6 +766,9 @@ func CaseContractTransferBetweenAccountAndContract(t *testing.T) {
 			contractID:               stellarAssetContractID(itest, asset),
 		})
 		assertEventPayments(itest, transferTx, asset, recipientKp.Address(), strkeyRecipientContractID, "transfer", "30.0000000")
+	} else {
+		fx := getTxEffects(itest, transferTx, asset)
+		require.Len(t, fx, 0)
 	}
 	// transfer from contract to account
 	_, transferTx, _ = assertInvokeHostFnSucceeds(
@@ -959,6 +974,9 @@ func CaseContractBurnFromAccount(t *testing.T) {
 			contractID:               stellarAssetContractID(itest, asset),
 		})
 		assertEventPayments(itest, burnTx, asset, recipientKp.Address(), "", "burn", "500.0000000")
+	} else {
+		fx := getTxEffects(itest, burnTx, asset)
+		require.Len(t, fx, 0)
 	}
 }
 
@@ -1031,6 +1049,9 @@ func CaseContractBurnFromContract(t *testing.T) {
 			contractID:               stellarAssetContractID(itest, asset),
 		})
 		assertEventPayments(itest, burnTx, asset, strkeyRecipientContractID, "", "burn", "10.0000000")
+	} else {
+		fx := getTxEffects(itest, burnTx, asset)
+		require.Len(t, fx, 0)
 	}
 }
 
@@ -1116,6 +1137,9 @@ func CaseContractClawbackFromAccount(t *testing.T) {
 			contractID:               stellarAssetContractID(itest, asset),
 		})
 		assertEventPayments(itest, clawTx, asset, recipientKp.Address(), "", "clawback", "1000.0000000")
+	} else {
+		fx := getTxEffects(itest, clawTx, asset)
+		require.Len(t, fx, 0)
 	}
 }
 
@@ -1191,6 +1215,9 @@ func CaseContractClawbackFromContract(t *testing.T) {
 			contractID:               stellarAssetContractID(itest, asset),
 		})
 		assertEventPayments(itest, clawTx, asset, strkeyRecipientContractID, "", "clawback", "10.0000000")
+	} else {
+		fx := getTxEffects(itest, clawTx, asset)
+		require.Len(t, fx, 0)
 	}
 }
 
