@@ -338,7 +338,7 @@ func CaseExpirationAndRestoration(t *testing.T) {
 			// a fake asset contract in the horizon db and we don't
 			// want state verification to detect this
 			"ingest-disable-state-verification": "true",
-			"disable-soroban-ingest": fmt.Sprint(DisabledSoroban),
+			"disable-soroban-ingest":            fmt.Sprint(DisabledSoroban),
 		},
 	})
 

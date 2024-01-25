@@ -700,7 +700,7 @@ func (operation *transactionOperationWrapper) Details() (map[string]interface{},
 			var balanceChanges []map[string]interface{}
 			var parseErr error
 			if operation.skipSorobanDetails {
-                // https://github.com/stellar/go/issues/5175
+				// https://github.com/stellar/go/issues/5175
 				// intentionally toggle off parsing soroban meta into "asset_balance_changes"
 				balanceChanges = make([]map[string]interface{}, 0)
 			} else {
