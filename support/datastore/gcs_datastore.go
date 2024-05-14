@@ -162,7 +162,7 @@ func (b GCSDataStore) putFile(ctx context.Context, filePath string, in io.Writer
 	w.SendCRC32C = true
 	// we must set CRC32C before invoking w.Write() for the first time
 	w.CRC32C = crc32.Checksum(buf.Bytes(), crc32.MakeTable(crc32.Castagnoli))
-	if _, err := in.WriteTo(w); err != nil {
+	if _, err := io.Copy(w, buf); err != nil {
 		return errors.Wrapf(err, "failed to put file: %s", filePath)
 	}
 	return w.Close()
