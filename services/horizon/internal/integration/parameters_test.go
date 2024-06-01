@@ -198,7 +198,8 @@ func TestNetworkParameter(t *testing.T) {
 	for _, tt := range testCases {
 		t.Run(fmt.Sprintf("NETWORK parameter %s", tt.networkValue), func(t *testing.T) {
 			localParams := integration.MergeMaps(networkParamArgs, map[string]string{
-				horizon.NetworkFlagName: tt.networkValue,
+				horizon.NetworkFlagName:        tt.networkValue,
+				horizon.CaptiveCoreConfigUseDB: "true",
 			})
 			testConfig := integration.GetTestConfig()
 			testConfig.SkipCoreContainerCreation = true
