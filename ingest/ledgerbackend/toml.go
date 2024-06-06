@@ -23,6 +23,8 @@ var (
 
 	//go:embed configs/captive-core-testnet.cfg
 	TestnetDefaultConfig []byte
+
+	DefaultBucketListDBPageSize uint = 12
 )
 
 const (
@@ -541,8 +543,7 @@ func (c *CaptiveCoreToml) setDefaults(params CaptiveCoreTomlParams) {
 		c.DeprecatedSqlLedgerState = true
 	} else {
 		if !c.tree.Has("BUCKETLIST_DB_INDEX_PAGE_SIZE_EXPONENT") {
-			n := uint(12)
-			c.BucketListDBPageSizeExp = &n // Set default page size to 4KB
+			c.BucketListDBPageSizeExp = &DefaultBucketListDBPageSize
 		}
 		c.DeprecatedSqlLedgerState = false
 	}
