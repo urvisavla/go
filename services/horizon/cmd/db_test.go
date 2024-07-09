@@ -96,3 +96,75 @@ func (s *DBCommandsTestSuite) TestUsesParallelJobSizeWhenSetForBuffered() {
 	require.NoError(s.T(), RootCmd.Execute())
 	require.Equal(s.T(), parallelJobSize, uint32(5))
 }
+
+func (s *DBCommandsTestSuite) TestDbReingestAndFillGapsCmds() {
+	tests := []struct {
+		name          string
+		args          []string
+		ledgerBackend ingest.LedgerBackendType
+		expectError   bool
+		errorMessage  string
+	}{
+		{
+			name:        "default ledgerbackend",
+			args:        []string{"1", "100"},
+			expectError: false,
+		},
+		{
+			name:        "captive-core ledgerbackend",
+			args:        []string{"1", "100", "--ledgerbackend", "captive-core"},
+			expectError: false,
+		},
+		{
+			name:         "invalid ledgerbackend",
+			args:         []string{"1", "100", "--ledgerbackend", "unknown"},
+			expectError:  true,
+			errorMessage: "invalid ledger backend: unknown, must be 'captive-core' or 'datastore'",
+		},
+		{
+			name:         "datastore ledgerbackend without config",
+			args:         []string{"1", "100", "--ledgerbackend", "datastore"},
+			expectError:  true,
+			errorMessage: "datastore config file is required for datastore backend type",
+		},
+		{
+			name:         "datastore ledgerbackend missing config file",
+			args:         []string{"1", "100", "--ledgerbackend", "datastore", "--datastore-config", "invalid.config.toml"},
+			expectError:  true,
+			errorMessage: "failed to load config file",
+		},
+		{
+			name:        "datastore ledgerbackend",
+			args:        []string{"1", "100", "--ledgerbackend", "datastore", "--datastore-config", "../config.storagebackend.toml"},
+			expectError: false,
+		},
+	}
+
+	commands := []struct {
+		cmd  []string
+		name string
+	}{
+		{[]string{"db", "reingest", "range"}, "TestDbReingestRangeCmd"},
+		{[]string{"db", "fill-gaps"}, "TestDbFillGapsCmd"},
+	}
+
+	for _, command := range commands {
+		for _, tt := range tests {
+			s.T().Run(tt.name+"_"+command.name, func(t *testing.T) {
+				args := append(command.cmd, tt.args...)
+				RootCmd.SetArgs(append([]string{
+					"--db-url", s.dsn,
+					"--network", "testnet",
+				}, args...))
+
+				if tt.expectError {
+					err := RootCmd.Execute()
+					require.Error(t, err)
+					require.Contains(t, err.Error(), tt.errorMessage)
+				} else {
+					require.NoError(t, RootCmd.Execute())
+				}
+			})
+		}
+	}
+}
