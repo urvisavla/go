@@ -3,12 +3,13 @@ package cmd
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	horizon "github.com/stellar/go/services/horizon/internal"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/services/horizon/internal/ingest"
 	"github.com/stellar/go/support/db/dbtest"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestDBCommandsTestSuite(t *testing.T) {
@@ -155,6 +156,7 @@ func (s *DBCommandsTestSuite) TestDbReingestAndFillGapsCmds() {
 				RootCmd.SetArgs(append([]string{
 					"--db-url", s.dsn,
 					"--network", "testnet",
+					"--stellar-core-binary-path", "/test/core/bin/path",
 				}, args...))
 
 				if tt.expectError {
