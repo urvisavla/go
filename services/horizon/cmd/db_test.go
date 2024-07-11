@@ -22,6 +22,20 @@ type DBCommandsTestSuite struct {
 	dsn string
 }
 
+func (s *DBCommandsTestSuite) SetupTest() {
+	resetFlags()
+}
+
+func resetFlags() {
+	RootCmd.ResetFlags()
+	dbFillGapsCmd.ResetFlags()
+	dbReingestRangeCmd.ResetFlags()
+
+	globalFlags.Init(RootCmd)
+	dbFillGapsCmdOpts.Init(dbFillGapsCmd)
+	dbReingestRangeCmdOpts.Init(dbReingestRangeCmd)
+}
+
 func (s *DBCommandsTestSuite) SetupSuite() {
 	runDBReingestRangeFn = func([]history.LedgerRange, bool, uint,
 		horizon.Config, ingest.StorageBackendConfig) error {
@@ -107,37 +121,120 @@ func (s *DBCommandsTestSuite) TestDbReingestAndFillGapsCmds() {
 		errorMessage  string
 	}{
 		{
-			name:        "default ledgerbackend",
-			args:        []string{"1", "100"},
+			name: "default; w/ individual network flags",
+			args: []string{
+				"1", "100",
+				"--network-passphrase", "passphrase",
+				"--history-archive-urls", "[]",
+			},
 			expectError: false,
 		},
 		{
-			name:        "captive-core ledgerbackend",
-			args:        []string{"1", "100", "--ledgerbackend", "captive-core"},
+			name: "default; w/o individual network flags",
+			args: []string{
+				"1", "100",
+			},
+			expectError:  true,
+			errorMessage: "network-passphrase must be set",
+		},
+		{
+			name: "default; no history-archive-urls flag",
+			args: []string{
+				"1", "100",
+				"--network-passphrase", "passphrase",
+			},
+			expectError:  true,
+			errorMessage: "history-archive-urls must be set",
+		},
+		{
+			name: "default; w/ network parameter",
+			args: []string{
+				"1", "100",
+				"--network", "testnet",
+			},
 			expectError: false,
 		},
 		{
-			name:         "invalid ledgerbackend",
-			args:         []string{"1", "100", "--ledgerbackend", "unknown"},
+			name: "datastore; w/ individual network flags",
+			args: []string{
+				"1", "100",
+				"--ledgerbackend", "datastore",
+				"--datastore-config", "../config.storagebackend.toml",
+				"--network-passphrase", "passphrase",
+				"--history-archive-urls", "[]",
+			},
+			expectError: false,
+		},
+		{
+			name: "datastore; w/o individual network flags",
+			args: []string{
+				"1", "100",
+				"--ledgerbackend", "datastore",
+				"--datastore-config", "../config.storagebackend.toml",
+			},
+			expectError:  true,
+			errorMessage: "network-passphrase must be set",
+		},
+		{
+			name: "datastore; no history-archive-urls flag",
+			args: []string{
+				"1", "100",
+				"--ledgerbackend", "datastore",
+				"--datastore-config", "../config.storagebackend.toml",
+				"--network-passphrase", "passphrase",
+			},
+			expectError:  true,
+			errorMessage: "history-archive-urls must be set",
+		},
+		{
+			name: "captive-core; valid",
+			args: []string{
+				"1", "100",
+				"--network", "testnet",
+				"--ledgerbackend", "captive-core",
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid datastore",
+			args: []string{
+				"1", "100",
+				"--network", "testnet",
+				"--ledgerbackend", "unknown",
+			},
 			expectError:  true,
 			errorMessage: "invalid ledger backend: unknown, must be 'captive-core' or 'datastore'",
 		},
 		{
-			name:         "datastore ledgerbackend without config",
-			args:         []string{"1", "100", "--ledgerbackend", "datastore"},
-			expectError:  true,
-			errorMessage: "datastore config file is required for datastore backend type",
-		},
-		{
-			name:         "datastore ledgerbackend missing config file",
-			args:         []string{"1", "100", "--ledgerbackend", "datastore", "--datastore-config", "invalid.config.toml"},
+			name: "datastore; missing config file",
+			args: []string{
+				"1", "100",
+				"--network", "testnet",
+				"--ledgerbackend", "datastore",
+				"--datastore-config", "invalid.config.toml",
+			},
 			expectError:  true,
 			errorMessage: "failed to load config file",
 		},
 		{
-			name:        "datastore ledgerbackend",
-			args:        []string{"1", "100", "--ledgerbackend", "datastore", "--datastore-config", "../config.storagebackend.toml"},
+			name: "datastore; w/ config",
+			args: []string{
+				"1", "100",
+				"--network", "testnet",
+				"--ledgerbackend", "datastore",
+				"--datastore-config", "../config.storagebackend.toml",
+			},
 			expectError: false,
+		},
+		{
+			name: "datastore; w/o config",
+			args: []string{
+				"1", "100",
+				"--network", "testnet",
+				"--ledgerbackend", "datastore",
+			},
+			expectError:  true,
+			errorMessage: "datastore config file is required for datastore backend type",
 		},
 	}
 
@@ -152,10 +249,12 @@ func (s *DBCommandsTestSuite) TestDbReingestAndFillGapsCmds() {
 	for _, command := range commands {
 		for _, tt := range tests {
 			s.T().Run(tt.name+"_"+command.name, func(t *testing.T) {
-				args := append(command.cmd, tt.args...)
+				resetFlags()
+
+				var args []string
+				args = append(command.cmd, tt.args...)
 				RootCmd.SetArgs(append([]string{
 					"--db-url", s.dsn,
-					"--network", "testnet",
 					"--stellar-core-binary-path", "/test/core/bin/path",
 				}, args...))
 
