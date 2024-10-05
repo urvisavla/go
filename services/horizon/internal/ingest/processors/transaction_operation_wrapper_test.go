@@ -5,9 +5,10 @@ package processors
 import (
 	"testing"
 
-	"github.com/stellar/go/protocols/horizon/base"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/stellar/go/protocols/horizon/base"
 
 	"github.com/stellar/go/ingest"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
@@ -797,7 +798,7 @@ func TestTransactionOperationDetails(t *testing.T) {
 		})
 	}
 
-	tx := createTransaction(true, 1)
+	tx := createTransaction(true, 1, 2)
 	tx.Index = 1
 
 	tx.Envelope.Operations()[0].Body = xdr.OperationBody{
@@ -1476,7 +1477,7 @@ var (
 
 func getSponsoredSandwichWrappers() []*transactionOperationWrapper {
 	const ledgerSeq = uint32(12345)
-	tx := createTransaction(true, 3)
+	tx := createTransaction(true, 3, 2)
 	tx.Index = 1
 	tx.UnsafeMeta = xdr.TransactionMeta{
 		V: 2,
@@ -1521,6 +1522,13 @@ func getSponsoredSandwichWrappers() []*transactionOperationWrapper {
 		{
 			Type: xdr.LedgerEntryChangeTypeLedgerEntryCreated,
 			Created: &xdr.LedgerEntry{
+				Data: xdr.LedgerEntryData{
+					Type: xdr.LedgerEntryTypeAccount,
+					Account: &xdr.AccountEntry{
+						AccountId: xdr.MustAddress("GAUJETIZVEP2NRYLUESJ3LS66NVCEGMON4UDCBCSBEVPIID773P2W6AY"),
+						Balance:   100,
+					},
+				},
 				LastModifiedLedgerSeq: xdr.Uint32(ledgerSeq),
 				Ext: xdr.LedgerEntryExt{
 					V: 1,

@@ -1,7 +1,7 @@
 # Docker build targets use an optional "TAG" environment
 # variable can be set to use custom tag name. For example:
 #   TAG=my-registry.example.com/keystore:dev make keystore
-XDRS = xdr/Stellar-SCP.x \
+DOWNLOADABLE_XDRS = xdr/Stellar-SCP.x \
 xdr/Stellar-ledger-entries.x \
 xdr/Stellar-ledger.x \
 xdr/Stellar-overlay.x \
@@ -14,8 +14,11 @@ xdr/Stellar-contract.x \
 xdr/Stellar-internal.x \
 xdr/Stellar-contract-config-setting.x
 
-XDRGEN_COMMIT=a231a92475ac6154c0c2f46dc503809823985060
-XDR_COMMIT=9ac02641139e6717924fdad716f6e958d0168491
+XDRS = $(DOWNLOADABLE_XDRS) xdr/Stellar-exporter.x
+
+
+XDRGEN_COMMIT=e2cac557162d99b12ae73b846cf3d5bfe16636de
+XDR_COMMIT=70180d5e8d9caee9e8645ed8a38c36a8cf403cd9
 
 .PHONY: xdr xdr-clean xdr-update
 
@@ -31,6 +34,9 @@ friendbot:
 horizon:
 	$(MAKE) -C services/horizon/ binary-build
 
+galexie:
+	$(MAKE) -C services/galexie/ docker-build
+
 webauth:
 	$(MAKE) -C exp/services/webauth/ docker-build
 
@@ -40,7 +46,7 @@ recoverysigner:
 regulated-assets-approval-server:
 	$(MAKE) -C services/regulated-assets-approval-server/ docker-build
 
-gxdr/xdr_generated.go: $(XDRS)
+gxdr/xdr_generated.go: $(DOWNLOADABLE_XDRS)
 	go run github.com/xdrpp/goxdr/cmd/goxdr -p gxdr -enum-comments -o $@ $(XDRS)
 	gofmt -s -w $@
 
@@ -48,7 +54,7 @@ xdr/%.x:
 	printf "%s" ${XDR_COMMIT} > xdr/xdr_commit_generated.txt
 	curl -Lsf -o $@ https://raw.githubusercontent.com/stellar/stellar-xdr/$(XDR_COMMIT)/$(@F)
 
-xdr/xdr_generated.go: $(XDRS)
+xdr/xdr_generated.go: $(DOWNLOADABLE_XDRS)
 	docker run -it --rm -v $$PWD:/wd -w /wd ruby /bin/bash -c '\
 		gem install specific_install -v 0.3.8 && \
 		gem specific_install https://github.com/stellar/xdrgen.git -b $(XDRGEN_COMMIT) && \
@@ -64,6 +70,6 @@ xdr/xdr_generated.go: $(XDRS)
 xdr: gxdr/xdr_generated.go xdr/xdr_generated.go
 
 xdr-clean:
-	rm xdr/*.x || true
+	rm $(DOWNLOADABLE_XDRS) || true
 
 xdr-update: xdr-clean xdr

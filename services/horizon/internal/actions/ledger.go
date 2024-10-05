@@ -22,7 +22,7 @@ func (handler GetLedgersHandler) GetResourcePage(w HeaderWriter, r *http.Request
 		return nil, err
 	}
 
-	err = validateCursorWithinHistory(handler.LedgerState, pq)
+	err = validateAndAdjustCursor(handler.LedgerState, &pq)
 	if err != nil {
 		return nil, err
 	}

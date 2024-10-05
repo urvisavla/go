@@ -400,9 +400,53 @@ struct DiagnosticEvent
     ContractEvent event;
 };
 
-struct SorobanTransactionMeta 
+typedef DiagnosticEvent DiagnosticEvents<>;
+
+struct SorobanTransactionMetaExtV1
 {
     ExtensionPoint ext;
+
+    // The following are the components of the overall Soroban resource fee
+    // charged for the transaction.
+    // The following relation holds:
+    // `resourceFeeCharged = totalNonRefundableResourceFeeCharged + totalRefundableResourceFeeCharged`
+    // where `resourceFeeCharged` is the overall fee charged for the 
+    // transaction. Also, `resourceFeeCharged` <= `sorobanData.resourceFee` 
+    // i.e.we never charge more than the declared resource fee.
+    // The inclusion fee for charged the Soroban transaction can be found using 
+    // the following equation:
+    // `result.feeCharged = resourceFeeCharged + inclusionFeeCharged`.
+
+    // Total amount (in stroops) that has been charged for non-refundable
+    // Soroban resources.
+    // Non-refundable resources are charged based on the usage declared in
+    // the transaction envelope (such as `instructions`, `readBytes` etc.) and 
+    // is charged regardless of the success of the transaction.
+    int64 totalNonRefundableResourceFeeCharged;
+    // Total amount (in stroops) that has been charged for refundable
+    // Soroban resource fees.
+    // Currently this comprises the rent fee (`rentFeeCharged`) and the
+    // fee for the events and return value.
+    // Refundable resources are charged based on the actual resources usage.
+    // Since currently refundable resources are only used for the successful
+    // transactions, this will be `0` for failed transactions.
+    int64 totalRefundableResourceFeeCharged;
+    // Amount (in stroops) that has been charged for rent.
+    // This is a part of `totalNonRefundableResourceFeeCharged`.
+    int64 rentFeeCharged;
+};
+
+union SorobanTransactionMetaExt switch (int v)
+{
+case 0:
+    void;
+case 1:
+    SorobanTransactionMetaExtV1 v1;
+};
+
+struct SorobanTransactionMeta 
+{
+    SorobanTransactionMetaExt ext;
 
     ContractEvent events<>;             // custom events populated by the
                                         // contracts themselves.
@@ -484,29 +528,23 @@ struct LedgerCloseMetaV0
     SCPHistoryEntry scpInfo<>;
 };
 
-struct LedgerCloseMetaV1
+struct LedgerCloseMetaExtV1
 {
-    LedgerHeaderHistoryEntry ledgerHeader;
-
-    GeneralizedTransactionSet txSet;
-
-    // NB: transactions are sorted in apply order here
-    // fees for all transactions are processed first
-    // followed by applying transactions
-    TransactionResultMeta txProcessing<>;
-
-    // upgrades are applied last
-    UpgradeEntryMeta upgradesProcessing<>;
-
-    // other misc information attached to the ledger close
-    SCPHistoryEntry scpInfo<>;
+    ExtensionPoint ext;
+    int64 sorobanFeeWrite1KB;
 };
 
-struct LedgerCloseMetaV2
+union LedgerCloseMetaExt switch (int v)
 {
-    // We forgot to add an ExtensionPoint in v1 but at least
-    // we can add one now in v2.
-    ExtensionPoint ext;
+case 0:
+    void;
+case 1:
+    LedgerCloseMetaExtV1 v1;
+};
+
+struct LedgerCloseMetaV1
+{
+    LedgerCloseMetaExt ext;
 
     LedgerHeaderHistoryEntry ledgerHeader;
 
@@ -527,10 +565,10 @@ struct LedgerCloseMetaV2
     // systems calculating storage fees correctly.
     uint64 totalByteSizeOfBucketList;
 
-    // Expired temp keys that are being evicted at this ledger.
+    // Temp keys that are being evicted at this ledger.
     LedgerKey evictedTemporaryLedgerKeys<>;
 
-    // Expired restorable ledger entries that are being
+    // Archived restorable ledger entries that are being
     // evicted at this ledger.
     LedgerEntry evictedPersistentLedgerEntries<>;
 };
@@ -541,7 +579,5 @@ case 0:
     LedgerCloseMetaV0 v0;
 case 1:
     LedgerCloseMetaV1 v1;
-case 2:
-    LedgerCloseMetaV2 v2;
 };
 }

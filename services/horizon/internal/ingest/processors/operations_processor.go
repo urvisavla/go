@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
+
 	"github.com/guregu/null"
 
 	"github.com/stellar/go/amount"
@@ -29,6 +31,10 @@ func NewOperationProcessor(batch history.OperationBatchInsertBuilder, network st
 		batch:   batch,
 		network: network,
 	}
+}
+
+func (p *OperationProcessor) Name() string {
+	return "processors.OperationProcessor"
 }
 
 // ProcessTransaction process the given transaction
@@ -715,9 +721,9 @@ func (operation *transactionOperationWrapper) Details() (map[string]interface{},
 		default:
 			panic(fmt.Errorf("unknown host function type: %s", op.HostFunction.Type))
 		}
-	case xdr.OperationTypeBumpFootprintExpiration:
-		op := operation.operation.Body.MustBumpFootprintExpirationOp()
-		details["ledgers_to_expire"] = op.LedgersToExpire
+	case xdr.OperationTypeExtendFootprintTtl:
+		op := operation.operation.Body.MustExtendFootprintTtlOp()
+		details["extend_to"] = op.ExtendTo
 	case xdr.OperationTypeRestoreFootprint:
 	default:
 		panic(fmt.Errorf("unknown operation type: %s", operation.OperationType()))
@@ -1013,7 +1019,7 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 		// the only direct participant is the source_account
 	case xdr.OperationTypeInvokeHostFunction:
 		// the only direct participant is the source_account
-	case xdr.OperationTypeBumpFootprintExpiration:
+	case xdr.OperationTypeExtendFootprintTtl:
 		// the only direct participant is the source_account
 	case xdr.OperationTypeRestoreFootprint:
 		// the only direct participant is the source_account
@@ -1033,16 +1039,25 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 }
 
 // dedupeParticipants remove any duplicate ids from `in`
-func dedupeParticipants(in []xdr.AccountId) (out []xdr.AccountId) {
-	set := map[string]xdr.AccountId{}
-	for _, id := range in {
-		set[id.Address()] = id
+func dedupeParticipants(in []xdr.AccountId) []xdr.AccountId {
+	if len(in) <= 1 {
+		return in
 	}
+	sort.Slice(in, func(i, j int) bool {
+		return in[i].Address() < in[j].Address()
+	})
+	insert := 1
+	for cur := 1; cur < len(in); cur++ {
+		if in[cur].Equals(in[cur-1]) {
+			continue
+		}
+		if insert != cur {
+			in[insert] = in[cur]
+		}
+		insert++
+	}
+	return in[:insert]
 
-	for _, id := range set {
-		out = append(out, id)
-	}
-	return
 }
 
 // OperationsParticipants returns a map with all participants per operation

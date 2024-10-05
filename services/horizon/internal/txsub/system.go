@@ -7,7 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stellar/go/services/horizon/internal/ledger"
+
 	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/support/log"
 	"github.com/stellar/go/xdr"
@@ -40,12 +43,9 @@ type System struct {
 	Submitter         Submitter
 	SubmissionTimeout time.Duration
 	Log               *log.Entry
+	LedgerState       ledger.StateInterface
 
 	Metrics struct {
-		// SubmissionDuration exposes timing metrics about the rate and latency of
-		// submissions to stellar-core
-		SubmissionDuration prometheus.Summary
-
 		// OpenSubmissionsGauge tracks the count of "open" submissions (i.e.
 		// submissions whose transactions haven't been confirmed successful or failed
 		OpenSubmissionsGauge prometheus.Gauge
@@ -57,30 +57,14 @@ type System struct {
 		// SuccessfulSubmissionsCounter tracks the rate of successful transactions that
 		// have been submitted to this process
 		SuccessfulSubmissionsCounter prometheus.Counter
-
-		// V0TransactionsCounter tracks the rate of v0 transaction envelopes that
-		// have been submitted to this process
-		V0TransactionsCounter prometheus.Counter
-
-		// V1TransactionsCounter tracks the rate of v1 transaction envelopes that
-		// have been submitted to this process
-		V1TransactionsCounter prometheus.Counter
-
-		// FeeBumpTransactionsCounter tracks the rate of fee bump transaction envelopes that
-		// have been submitted to this process
-		FeeBumpTransactionsCounter prometheus.Counter
 	}
 }
 
 // RegisterMetrics registers the prometheus metrics
 func (sys *System) RegisterMetrics(registry *prometheus.Registry) {
-	registry.MustRegister(sys.Metrics.SubmissionDuration)
 	registry.MustRegister(sys.Metrics.OpenSubmissionsGauge)
 	registry.MustRegister(sys.Metrics.FailedSubmissionsCounter)
 	registry.MustRegister(sys.Metrics.SuccessfulSubmissionsCounter)
-	registry.MustRegister(sys.Metrics.V0TransactionsCounter)
-	registry.MustRegister(sys.Metrics.V1TransactionsCounter)
-	registry.MustRegister(sys.Metrics.FeeBumpTransactionsCounter)
 }
 
 // Submit submits the provided base64 encoded transaction envelope to the
@@ -128,7 +112,6 @@ func (sys *System) Submit(
 	}
 
 	sr := sys.submitOnce(ctx, rawTx)
-	sys.updateTransactionTypeMetrics(envelope)
 
 	if sr.Err != nil {
 		// any error other than "txBAD_SEQ" is a failure
@@ -190,7 +173,7 @@ func (sys *System) waitUntilAccountSequence(ctx context.Context, db HorizonDB, s
 					WithField("sourceAddress", sourceAddress).
 					Warn("missing sequence number for account")
 			}
-			if num >= seq {
+			if num >= seq || sys.isSyncedUp() {
 				return nil
 			}
 		}
@@ -204,6 +187,13 @@ func (sys *System) waitUntilAccountSequence(ctx context.Context, db HorizonDB, s
 	}
 }
 
+// isSyncedUp Check if Horizon and Core have synced up: If yes, then no need to wait for account sequence
+// and send txBAD_SEQ right away.
+func (sys *System) isSyncedUp() bool {
+	currentStatus := sys.LedgerState.CurrentStatus()
+	return int(currentStatus.CoreLatest) <= int(currentStatus.HistoryLatest)
+}
+
 func (sys *System) deriveTxSubError(ctx context.Context) error {
 	if ctx.Err() == context.Canceled {
 		return ErrCanceled
@@ -213,12 +203,10 @@ func (sys *System) deriveTxSubError(ctx context.Context) error {
 
 // Submit submits the provided base64 encoded transaction envelope to the
 // network using this submission system.
-func (sys *System) submitOnce(ctx context.Context, env string) SubmissionResult {
+func (sys *System) submitOnce(ctx context.Context, rawTx string) SubmissionResult {
 	// submit to stellar-core
-	sr := sys.Submitter.Submit(ctx, env)
-	sys.Metrics.SubmissionDuration.Observe(float64(sr.Duration.Seconds()))
+	sr := sys.Submitter.Submit(ctx, rawTx)
 
-	// if received or duplicate, add to the open submissions list
 	if sr.Err == nil {
 		sys.Metrics.SuccessfulSubmissionsCounter.Inc()
 	} else {
@@ -226,17 +214,6 @@ func (sys *System) submitOnce(ctx context.Context, env string) SubmissionResult 
 	}
 
 	return sr
-}
-
-func (sys *System) updateTransactionTypeMetrics(envelope xdr.TransactionEnvelope) {
-	switch envelope.Type {
-	case xdr.EnvelopeTypeEnvelopeTypeTxV0:
-		sys.Metrics.V0TransactionsCounter.Inc()
-	case xdr.EnvelopeTypeEnvelopeTypeTx:
-		sys.Metrics.V1TransactionsCounter.Inc()
-	case xdr.EnvelopeTypeEnvelopeTypeTxFeeBump:
-		sys.Metrics.FeeBumpTransactionsCounter.Inc()
-	}
 }
 
 // setTickInProgress sets `tickInProgress` to `true` if it's
@@ -351,11 +328,6 @@ func (sys *System) Init() {
 	sys.initializer.Do(func() {
 		sys.Log = log.DefaultLogger.WithField("service", "txsub.System")
 
-		sys.Metrics.SubmissionDuration = prometheus.NewSummary(prometheus.SummaryOpts{
-			Namespace: "horizon", Subsystem: "txsub", Name: "submission_duration_seconds",
-			Help:       "submission durations to Stellar-Core, sliding window = 10m",
-			Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
-		})
 		sys.Metrics.FailedSubmissionsCounter = prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: "horizon", Subsystem: "txsub", Name: "failed",
 		})
@@ -364,15 +336,6 @@ func (sys *System) Init() {
 		})
 		sys.Metrics.OpenSubmissionsGauge = prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: "horizon", Subsystem: "txsub", Name: "open",
-		})
-		sys.Metrics.V0TransactionsCounter = prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: "horizon", Subsystem: "txsub", Name: "v0",
-		})
-		sys.Metrics.V1TransactionsCounter = prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: "horizon", Subsystem: "txsub", Name: "v1",
-		})
-		sys.Metrics.FeeBumpTransactionsCounter = prometheus.NewCounter(prometheus.CounterOpts{
-			Namespace: "horizon", Subsystem: "txsub", Name: "feebump",
 		})
 
 		sys.accountSeqPollInterval = time.Second

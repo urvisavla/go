@@ -6,6 +6,7 @@ import (
 
 	"github.com/guregu/null"
 
+	"github.com/stellar/go/services/horizon/internal/db2"
 	"github.com/stellar/go/services/horizon/internal/test"
 	"github.com/stellar/go/toid"
 )
@@ -19,7 +20,7 @@ func TestAddEffect(t *testing.T) {
 
 	address := "GAQAA5L65LSYH7CQ3VTJ7F3HHLGCL3DSLAR2Y47263D56MNNGHSQSTVY"
 	muxedAddres := "MAQAA5L65LSYH7CQ3VTJ7F3HHLGCL3DSLAR2Y47263D56MNNGHSQSAAAAAAAAAAE2LP26"
-	accountLoader := NewAccountLoader()
+	accountLoader := NewAccountLoader(ConcurrentInserts)
 
 	builder := q.NewEffectBatchInsertBuilder()
 	sequence := int32(56)
@@ -42,8 +43,12 @@ func TestAddEffect(t *testing.T) {
 	tt.Assert.NoError(builder.Exec(tt.Ctx, q))
 	tt.Assert.NoError(q.Commit())
 
-	effects := []Effect{}
-	tt.Assert.NoError(q.Effects().Select(tt.Ctx, &effects))
+	effects, err := q.Effects(tt.Ctx, db2.PageQuery{
+		Cursor: "0-0",
+		Order:  "asc",
+		Limit:  200,
+	})
+	tt.Require.NoError(err)
 	tt.Assert.Len(effects, 1)
 
 	effect := effects[0]

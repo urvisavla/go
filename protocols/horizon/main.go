@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/stellar/go/protocols/horizon/base"
+	proto "github.com/stellar/go/protocols/stellarcore"
 	"github.com/stellar/go/strkey"
 	"github.com/stellar/go/support/errors"
 	"github.com/stellar/go/support/render/hal"
@@ -27,6 +29,13 @@ var KeyTypeNames = map[strkey.VersionByte]string{
 	strkey.VersionByteHashTx:        "preauth_tx",
 	strkey.VersionByteHashX:         "sha256_hash",
 	strkey.VersionByteSignedPayload: "ed25519_signed_payload",
+}
+
+var coreStatusToHTTPStatus = map[string]int{
+	proto.TXStatusPending:       http.StatusCreated,
+	proto.TXStatusDuplicate:     http.StatusConflict,
+	proto.TXStatusTryAgainLater: http.StatusServiceUnavailable,
+	proto.TXStatusError:         http.StatusBadRequest,
 }
 
 // Account is the summary of an account
@@ -173,12 +182,14 @@ type AssetStat struct {
 	NumClaimableBalances int32 `json:"num_claimable_balances"`
 	NumLiquidityPools    int32 `json:"num_liquidity_pools"`
 	NumContracts         int32 `json:"num_contracts"`
+	NumArchivedContracts int32 `json:"num_archived_contracts"`
 	// Action needed in release: horizon-v3.0.0: deprecated field
 	Amount                  string            `json:"amount"`
 	Accounts                AssetStatAccounts `json:"accounts"`
 	ClaimableBalancesAmount string            `json:"claimable_balances_amount"`
 	LiquidityPoolsAmount    string            `json:"liquidity_pools_amount"`
 	ContractsAmount         string            `json:"contracts_amount"`
+	ArchivedContractsAmount string            `json:"archived_contracts_amount"`
 	Balances                AssetStatBalances `json:"balances"`
 	Flags                   AccountFlags      `json:"flags"`
 }
@@ -516,7 +527,7 @@ type Transaction struct {
 	OperationCount    int32     `json:"operation_count"`
 	EnvelopeXdr       string    `json:"envelope_xdr"`
 	ResultXdr         string    `json:"result_xdr"`
-	ResultMetaXdr     string    `json:"result_meta_xdr"`
+	ResultMetaXdr     string    `json:"result_meta_xdr,omitempty"`
 	FeeMetaXdr        string    `json:"fee_meta_xdr"`
 	MemoType          string    `json:"memo_type"`
 	MemoBytes         string    `json:"memo_bytes,omitempty"`
@@ -563,6 +574,26 @@ type InnerTransaction struct {
 	Hash       string   `json:"hash"`
 	Signatures []string `json:"signatures"`
 	MaxFee     int64    `json:"max_fee,string"`
+}
+
+// AsyncTransactionSubmissionResponse represents the response returned by Horizon
+// when using the transaction-async endpoint.
+type AsyncTransactionSubmissionResponse struct {
+	// ErrorResultXDR is present only if Status is equal to proto.TXStatusError.
+	// ErrorResultXDR is a TransactionResult xdr string which contains details on why
+	// the transaction could not be accepted by stellar-core.
+	ErrorResultXDR string `json:"errorResultXdr,omitempty"`
+	// TxStatus represents the status of the transaction submission returned by stellar-core.
+	// It can be one of: proto.TXStatusPending, proto.TXStatusDuplicate,
+	// proto.TXStatusTryAgainLater, or proto.TXStatusError.
+	TxStatus string `json:"tx_status"`
+	// Hash is a hash of the transaction which can be used to look up whether
+	// the transaction was included in the ledger.
+	Hash string `json:"hash"`
+}
+
+func (response AsyncTransactionSubmissionResponse) GetStatus() int {
+	return coreStatusToHTTPStatus[response.TxStatus]
 }
 
 // MarshalJSON implements a custom marshaler for Transaction.

@@ -16,8 +16,11 @@ import (
 	"github.com/stellar/go/clients/stellarcore"
 	"github.com/stellar/go/historyarchive"
 	"github.com/stellar/go/support/log"
+	"github.com/stellar/go/support/storage"
 	"github.com/stellar/go/xdr"
 )
+
+const minProtocolVersionSupported uint = 21
 
 // Ensure CaptiveStellarCore implements LedgerBackend
 var _ LedgerBackend = (*CaptiveStellarCore)(nil)
@@ -109,8 +112,11 @@ type CaptiveStellarCore struct {
 	lastLedger         *uint32 // end of current segment if offline, nil if online
 	previousLedgerHash *string
 
-	config            CaptiveCoreConfig
-	stellarCoreClient *stellarcore.Client
+	config                   CaptiveCoreConfig
+	captiveCoreStartDuration prometheus.Summary
+	captiveCoreNewDBCounter  prometheus.Counter
+	stellarCoreClient        *stellarcore.Client
+	captiveCoreVersion       string // Updates when captive-core restarts
 }
 
 // CaptiveCoreConfig contains all the parameters required to create a CaptiveStellarCore instance
@@ -150,6 +156,12 @@ type CaptiveCoreConfig struct {
 	// of DATABASE parameter in the captive-core-config-path or if absent, the db will default to sqlite
 	// and the db file will be stored at location derived from StoragePath parameter.
 	UseDB bool
+
+	// CoreProtocolVersionFn is a function that returns the protocol version of the stellar-core binary.
+	CoreProtocolVersionFn CoreProtocolVersionFunc
+
+	// CoreBuildVersionFn is a function that returns the build version of the stellar-core binary.
+	CoreBuildVersionFn CoreBuildVersionFunc
 }
 
 // NewCaptive returns a new CaptiveStellarCore instance.
@@ -164,6 +176,25 @@ func NewCaptive(config CaptiveCoreConfig) (*CaptiveStellarCore, error) {
 		config.Log.SetLevel(logrus.InfoLevel)
 	}
 
+	if config.CoreProtocolVersionFn == nil {
+		config.CoreProtocolVersionFn = CoreProtocolVersion
+	}
+
+	if config.CoreBuildVersionFn == nil {
+		config.CoreBuildVersionFn = CoreBuildVersion
+	}
+
+	protocolVersion, err := config.CoreProtocolVersionFn(config.BinaryPath)
+	if err != nil {
+		return nil, fmt.Errorf("error determining stellar-core protocol version: %w", err)
+	}
+
+	if protocolVersion < minProtocolVersionSupported {
+		return nil, fmt.Errorf("stellar-core version not supported. Installed stellar-core version is at protocol %d, but minimum "+
+			"required version is %d. Please upgrade stellar-core to a version that supports protocol version %d or higher",
+			protocolVersion, minProtocolVersionSupported, minProtocolVersionSupported)
+	}
+
 	parentCtx := config.Context
 	if parentCtx == nil {
 		parentCtx = context.Background()
@@ -174,10 +205,14 @@ func NewCaptive(config CaptiveCoreConfig) (*CaptiveStellarCore, error) {
 
 	archivePool, err := historyarchive.NewArchivePool(
 		config.HistoryArchiveURLs,
-		historyarchive.ConnectOptions{
+		historyarchive.ArchiveOptions{
+			Logger:              config.Log,
 			NetworkPassphrase:   config.NetworkPassphrase,
 			CheckpointFrequency: config.CheckpointFrequency,
-			Context:             config.Context,
+			ConnectOptions: storage.ConnectOptions{
+				Context:   config.Context,
+				UserAgent: config.UserAgent,
+			},
 		},
 	)
 
@@ -187,7 +222,7 @@ func NewCaptive(config CaptiveCoreConfig) (*CaptiveStellarCore, error) {
 	}
 
 	c := &CaptiveStellarCore{
-		archive:           &archivePool,
+		archive:           archivePool,
 		ledgerHashStore:   config.LedgerHashStore,
 		useDB:             config.UseDB,
 		cancel:            cancel,
@@ -196,7 +231,8 @@ func NewCaptive(config CaptiveCoreConfig) (*CaptiveStellarCore, error) {
 	}
 
 	c.stellarCoreRunnerFactory = func() stellarCoreRunnerInterface {
-		return newStellarCoreRunner(config)
+		c.setCoreVersion()
+		return newStellarCoreRunner(config, c.captiveCoreNewDBCounter)
 	}
 
 	if config.Toml != nil && config.Toml.HTTPPort != 0 {
@@ -207,7 +243,7 @@ func NewCaptive(config CaptiveCoreConfig) (*CaptiveStellarCore, error) {
 			URL: fmt.Sprintf("http://localhost:%d", config.Toml.HTTPPort),
 		}
 	}
-
+	c.setCoreVersion()
 	return c, nil
 }
 
@@ -218,7 +254,6 @@ func (c *CaptiveStellarCore) coreSyncedMetric() float64 {
 
 	info, err := c.stellarCoreClient.Info(c.config.Context)
 	if err != nil {
-		c.config.Log.WithError(err).Warn("Cannot connect to Captive Stellar-Core HTTP server")
 		return -1
 	}
 
@@ -236,11 +271,23 @@ func (c *CaptiveStellarCore) coreVersionMetric() float64 {
 
 	info, err := c.stellarCoreClient.Info(c.config.Context)
 	if err != nil {
-		c.config.Log.WithError(err).Warn("Cannot connect to Captive Stellar-Core HTTP server")
 		return -1
 	}
 
 	return float64(info.Info.ProtocolVersion)
+}
+
+func (c *CaptiveStellarCore) setCoreVersion() {
+	var err error
+	c.captiveCoreVersion, err = c.config.CoreBuildVersionFn(c.config.BinaryPath)
+	if err != nil {
+		c.config.Log.Errorf("Failed to set stellar-core version: %s", err)
+	}
+	c.config.Log.Infof("stellar-core version: %s", c.captiveCoreVersion)
+}
+
+func (c *CaptiveStellarCore) GetCoreVersion() string {
+	return c.captiveCoreVersion
 }
 
 func (c *CaptiveStellarCore) registerMetrics(registry *prometheus.Registry, namespace string) {
@@ -270,7 +317,27 @@ func (c *CaptiveStellarCore) registerMetrics(registry *prometheus.Registry, name
 			return float64(latest)
 		},
 	)
-	registry.MustRegister(coreSynced, supportedProtocolVersion, latestLedger)
+	c.captiveCoreStartDuration = prometheus.NewSummary(prometheus.SummaryOpts{
+		Namespace:  namespace,
+		Subsystem:  "ingest",
+		Name:       "captive_stellar_core_start_duration_seconds",
+		Help:       "duration of start up time when running captive core on an unbounded range, sliding window = 10m",
+		Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
+	})
+	c.captiveCoreNewDBCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: namespace,
+		Subsystem: "ingest",
+		Name:      "captive_stellar_core_new_db",
+		Help:      "counter for the number of times we start up captive core with a new buckets db, sliding window = 10m",
+	})
+
+	registry.MustRegister(
+		coreSynced,
+		supportedProtocolVersion,
+		latestLedger,
+		c.captiveCoreStartDuration,
+		c.captiveCoreNewDBCounter,
+	)
 }
 
 func (c *CaptiveStellarCore) getLatestCheckpointSequence() (uint32, error) {
@@ -304,11 +371,11 @@ func (c *CaptiveStellarCore) openOfflineReplaySubprocess(from, to uint32) error 
 		)
 	}
 
-	c.stellarCoreRunner = c.stellarCoreRunnerFactory()
-	err = c.stellarCoreRunner.catchup(from, to)
-	if err != nil {
+	stellarCoreRunner := c.stellarCoreRunnerFactory()
+	if err = stellarCoreRunner.catchup(from, to); err != nil {
 		return errors.Wrap(err, "error running stellar-core")
 	}
+	c.stellarCoreRunner = stellarCoreRunner
 
 	// The next ledger should be the first ledger of the checkpoint containing
 	// the requested ledger
@@ -330,11 +397,11 @@ func (c *CaptiveStellarCore) openOnlineReplaySubprocess(ctx context.Context, fro
 		return errors.Wrap(err, "error calculating ledger and hash for stellar-core run")
 	}
 
-	c.stellarCoreRunner = c.stellarCoreRunnerFactory()
-	err = c.stellarCoreRunner.runFrom(runFrom, ledgerHash)
-	if err != nil {
+	stellarCoreRunner := c.stellarCoreRunnerFactory()
+	if err = stellarCoreRunner.runFrom(runFrom, ledgerHash); err != nil {
 		return errors.Wrap(err, "error running stellar-core")
 	}
+	c.stellarCoreRunner = stellarCoreRunner
 
 	// In the online mode we update nextLedger after streaming the first ledger.
 	// This is to support versions before and after/including v17.1.0 that
@@ -450,12 +517,6 @@ func (c *CaptiveStellarCore) startPreparingRange(ctx context.Context, ledgerRang
 		if err := c.stellarCoreRunner.close(); err != nil {
 			return false, errors.Wrap(err, "error closing existing session")
 		}
-
-		// Make sure Stellar-Core is terminated before starting a new instance.
-		processExited, _ := c.stellarCoreRunner.getProcessExitError()
-		if !processExited {
-			return false, errors.New("the previous Stellar-Core instance is still running")
-		}
 	}
 
 	var err error
@@ -482,18 +543,26 @@ func (c *CaptiveStellarCore) startPreparingRange(ctx context.Context, ledgerRang
 // Please note that using a BoundedRange, currently, requires a full-trust on
 // history archive. This issue is being fixed in Stellar-Core.
 func (c *CaptiveStellarCore) PrepareRange(ctx context.Context, ledgerRange Range) error {
+	startTime := time.Now()
 	if alreadyPrepared, err := c.startPreparingRange(ctx, ledgerRange); err != nil {
 		return errors.Wrap(err, "error starting prepare range")
 	} else if alreadyPrepared {
 		return nil
 	}
 
+	var reportedStartTime bool
 	// the prepared range might be below ledgerRange.from so we
 	// need to seek ahead until we reach ledgerRange.from
 	for seq := c.prepared.from; seq <= ledgerRange.from; seq++ {
 		_, err := c.GetLedger(ctx, seq)
 		if err != nil {
 			return errors.Wrapf(err, "Error fast-forwarding to %d", ledgerRange.from)
+		}
+		if !reportedStartTime {
+			reportedStartTime = true
+			if c.captiveCoreStartDuration != nil && !ledgerRange.bounded {
+				c.captiveCoreStartDuration.Observe(time.Since(startTime).Seconds())
+			}
 		}
 	}
 
@@ -517,7 +586,7 @@ func (c *CaptiveStellarCore) isPrepared(ledgerRange Range) bool {
 		return false
 	}
 
-	if exited, _ := c.stellarCoreRunner.getProcessExitError(); exited {
+	if _, exited := c.stellarCoreRunner.getProcessExitError(); exited {
 		return false
 	}
 
@@ -588,9 +657,6 @@ func (c *CaptiveStellarCore) GetLedger(ctx context.Context, sequence uint32) (xd
 	if c.stellarCoreRunner == nil {
 		return xdr.LedgerCloseMeta{}, errors.New("stellar-core cannot be nil, call PrepareRange first")
 	}
-	if c.closed {
-		return xdr.LedgerCloseMeta{}, errors.New("stellar-core has an error, call PrepareRange first")
-	}
 
 	if sequence < c.nextExpectedSequence() {
 		return xdr.LedgerCloseMeta{}, errors.Errorf(
@@ -608,12 +674,17 @@ func (c *CaptiveStellarCore) GetLedger(ctx context.Context, sequence uint32) (xd
 		)
 	}
 
+	ch, ok := c.stellarCoreRunner.getMetaPipe()
+	if !ok {
+		return xdr.LedgerCloseMeta{}, errors.New("stellar-core is not running, call PrepareRange first")
+	}
+
 	// Now loop along the range until we find the ledger we want.
 	for {
 		select {
 		case <-ctx.Done():
 			return xdr.LedgerCloseMeta{}, ctx.Err()
-		case result, ok := <-c.stellarCoreRunner.getMetaPipe():
+		case result, ok := <-ch:
 			found, ledger, err := c.handleMetaPipeResult(sequence, result, ok)
 			if found || err != nil {
 				return ledger, err
@@ -693,7 +764,7 @@ func (c *CaptiveStellarCore) checkMetaPipeResult(result metaResult, ok bool) err
 		return err
 	}
 	if !ok || result.err != nil {
-		exited, err := c.stellarCoreRunner.getProcessExitError()
+		err, exited := c.stellarCoreRunner.getProcessExitError()
 		if exited && err != nil {
 			// Case 2 - The stellar core process exited unexpectedly with an error message
 			return errors.Wrap(err, "stellar core exited unexpectedly")
@@ -736,12 +807,12 @@ func (c *CaptiveStellarCore) GetLatestLedgerSequence(ctx context.Context) (uint3
 	if c.stellarCoreRunner == nil {
 		return 0, errors.New("stellar-core cannot be nil, call PrepareRange first")
 	}
-	if c.closed {
-		return 0, errors.New("stellar-core is closed, call PrepareRange first")
-
+	ch, ok := c.stellarCoreRunner.getMetaPipe()
+	if !ok {
+		return 0, errors.New("stellar-core is not running, call PrepareRange first")
 	}
 	if c.lastLedger == nil {
-		return c.nextExpectedSequence() - 1 + uint32(len(c.stellarCoreRunner.getMetaPipe())), nil
+		return c.nextExpectedSequence() - 1 + uint32(len(ch)), nil
 	}
 	return *c.lastLedger, nil
 }
@@ -751,13 +822,13 @@ func (c *CaptiveStellarCore) GetLatestLedgerSequence(ctx context.Context) (uint3
 // all subsequent calls to PrepareRange(), GetLedger(), etc will fail.
 // Close is thread-safe and can be called from another go routine.
 func (c *CaptiveStellarCore) Close() error {
+	// after the CaptiveStellarCore context is canceled all subsequent calls to PrepareRange() will fail
+	c.cancel()
+
 	c.stellarCoreLock.RLock()
 	defer c.stellarCoreLock.RUnlock()
 
 	c.closed = true
-
-	// after the CaptiveStellarCore context is canceled all subsequent calls to PrepareRange() will fail
-	c.cancel()
 
 	// TODO: Sucks to ignore the error here, but no worse than it was before,
 	// so...

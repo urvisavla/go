@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/hex"
@@ -29,12 +30,12 @@ const assetStatsBatchSize = 500
 // check them.
 // There is a test that checks it, to fix it: update the actual `verifyState`
 // method instead of just updating this value!
-const stateVerifierExpectedIngestionVersion = 17
+const stateVerifierExpectedIngestionVersion = 18
 
 // verifyState is called as a go routine from pipeline post hook every 64
 // ledgers. It checks if the state is correct. If another go routine is already
 // running it exits.
-func (s *system) verifyState(verifyAgainstLatestCheckpoint bool) error {
+func (s *system) verifyState(verifyAgainstLatestCheckpoint bool, checkpointSequence uint32, expectedBucketListHash xdr.Hash) error {
 	s.stateVerificationMutex.Lock()
 	if s.stateVerificationRunning {
 		log.Warn("State verification is already running...")
@@ -90,6 +91,12 @@ func (s *system) verifyState(verifyAgainstLatestCheckpoint bool) error {
 
 	if !s.runStateVerificationOnLedger(ledgerSequence) {
 		localLog.Info("Current ledger is not eligible for state verification. Canceling...")
+		return nil
+	}
+
+	if ledgerSequence != checkpointSequence {
+		localLog.WithField("checkpointSequence", checkpointSequence).
+			Info("Current ledger does not match checkpoint sequence. Canceling...")
 		return nil
 	}
 
@@ -156,8 +163,8 @@ func (s *system) verifyState(verifyAgainstLatestCheckpoint bool) error {
 				}
 			}
 		}
-		log.WithField("duration", duration).Info("State verification finished")
 
+		localLog.WithField("duration", duration).Info("State verification finished")
 	}()
 
 	localLog.Info("Creating state reader...")
@@ -167,6 +174,9 @@ func (s *system) verifyState(verifyAgainstLatestCheckpoint bool) error {
 		return errors.Wrap(err, "Error running GetState")
 	}
 	defer stateReader.Close()
+	if err = stateReader.VerifyBucketList(expectedBucketListHash); err != nil {
+		return ingest.NewStateError(err)
+	}
 
 	verifier := verify.NewStateVerifier(stateReader, func(entry xdr.LedgerEntry) (bool, xdr.LedgerEntry) {
 		entryType := entry.Data.Type
@@ -180,7 +190,9 @@ func (s *system) verifyState(verifyAgainstLatestCheckpoint bool) error {
 		return false, entry
 	})
 
-	assetStats := processors.NewAssetStatSet(s.config.NetworkPassphrase)
+	assetStats := processors.NewAssetStatSet()
+	createdExpirationEntries := map[xdr.Hash]uint32{}
+	var contractDataEntries []xdr.LedgerEntry
 	total := int64(0)
 	for {
 		var entries []xdr.LedgerEntry
@@ -234,20 +246,17 @@ func (s *system) verifyState(verifyAgainstLatestCheckpoint bool) error {
 				if err = verifier.Write(entry); err != nil {
 					return err
 				}
-				err = assetStats.AddContractData(ingest.Change{
-					Type: xdr.LedgerEntryTypeContractData,
-					Post: &entry,
-				})
-				if err != nil {
-					return errors.Wrap(err, "Error running assetStats.AddContractData")
-				}
+				contractDataEntries = append(contractDataEntries, entry)
 				totalByType["contract_data"]++
-			case xdr.LedgerEntryTypeExpiration:
-				// we don't store expiration entries in the db,
-				// so there is nothing to verify in that case.
+			case xdr.LedgerEntryTypeTtl:
+				// we don't store all expiration entries in the db,
+				// we will only verify expiration of contract balances in the horizon db.
 				if err = verifier.Write(entry); err != nil {
 					return err
 				}
+				totalByType["ttl"]++
+				ttl := entry.Data.MustTtl()
+				createdExpirationEntries[ttl.KeyHash] = uint32(ttl.LiveUntilLedgerSeq)
 				totalByType["expiration"]++
 			default:
 				return errors.New("GetLedgerEntries return unexpected type")
@@ -288,6 +297,24 @@ func (s *system) verifyState(verifyAgainstLatestCheckpoint bool) error {
 		localLog.WithField("total", total).Info("Batch added to StateVerifier")
 	}
 
+	contractAssetStatSet := processors.NewContractAssetStatSet(
+		historyQ,
+		s.config.NetworkPassphrase,
+		map[xdr.Hash]uint32{},
+		createdExpirationEntries,
+		map[xdr.Hash][2]uint32{},
+		ledgerSequence,
+	)
+	for i := range contractDataEntries {
+		entry := contractDataEntries[i]
+		if err = contractAssetStatSet.AddContractData(ctx, ingest.Change{
+			Type: xdr.LedgerEntryTypeContractData,
+			Post: &entry,
+		}); err != nil {
+			return errors.Wrap(err, "Error ingesting contract data")
+		}
+	}
+
 	localLog.WithField("total", total).Info("Finished writing to StateVerifier")
 
 	countAccounts, err := historyQ.CountAccounts(ctx)
@@ -322,13 +349,13 @@ func (s *system) verifyState(verifyAgainstLatestCheckpoint bool) error {
 
 	err = verifier.Verify(
 		countAccounts + countData + countOffers + countTrustLines + countClaimableBalances +
-			countLiquidityPools + int(totalByType["contract_data"]) + int(totalByType["expiration"]),
+			countLiquidityPools + int(totalByType["contract_data"]) + int(totalByType["ttl"]),
 	)
 	if err != nil {
 		return errors.Wrap(err, "verifier.Verify failed")
 	}
 
-	err = checkAssetStats(ctx, assetStats, historyQ)
+	err = checkAssetStats(ctx, assetStats, contractAssetStatSet, historyQ, s.config.NetworkPassphrase)
 	if err != nil {
 		return errors.Wrap(err, "checkAssetStats failed")
 	}
@@ -338,21 +365,49 @@ func (s *system) verifyState(verifyAgainstLatestCheckpoint bool) error {
 	return nil
 }
 
-func checkAssetStats(ctx context.Context, set processors.AssetStatSet, q history.IngestionQ) error {
+func checkAssetStats(
+	ctx context.Context,
+	set processors.AssetStatSet,
+	contractAssetStatSet *processors.ContractAssetStatSet,
+	q history.IngestionQ,
+	networkPassphrase string,
+) error {
 	page := db2.PageQuery{
 		Order: "asc",
 		Limit: assetStatsBatchSize,
 	}
 
-	assetStats, err := set.AllFromSnapshot()
+	contractToAsset := contractAssetStatSet.GetAssetToContractMap()
+	assetStats := set.All()
+	var err error
+	assetStats, err = processors.IncludeContractIDsInAssetStats(networkPassphrase, assetStats, contractToAsset)
 	if err != nil {
-		return errors.Wrap(err, "could not fetch asset stats from asset stat set")
+		return err
 	}
+
 	all := map[string]history.ExpAssetStat{}
 	for _, assetStat := range assetStats {
 		// no need to handle the native asset because asset stats only
 		// include non-native assets.
 		all[assetStat.AssetCode+":"+assetStat.AssetIssuer] = assetStat
+	}
+
+	contractToStats := map[xdr.Hash]history.ContractAssetStatRow{}
+	for _, row := range contractAssetStatSet.GetContractStats() {
+		var contractID xdr.Hash
+		copy(contractID[:], row.ContractID)
+		contractToStats[contractID] = row
+	}
+
+	// only check contract asset balances which belong to stellar asset contracts
+	// because other balances may be forged.
+	var filteredBalances []history.ContractAssetBalance
+	for _, balance := range contractAssetStatSet.GetCreatedBalances() {
+		var contractID xdr.Hash
+		copy(contractID[:], balance.ContractID)
+		if _, ok := contractToAsset[contractID]; ok {
+			filteredBalances = append(filteredBalances, balance)
+		}
 	}
 
 	for {
@@ -377,13 +432,75 @@ func checkAssetStats(ctx context.Context, set processors.AssetStatSet, q history
 			}
 			delete(all, key)
 
-			if !fromSet.Equals(assetStat) {
+			if !fromSet.Equals(assetStat.ExpAssetStat) {
 				return ingest.NewStateError(
 					fmt.Errorf(
 						"db asset stat with code %s issuer %s does not match asset stat from HAS: expected=%v actual=%v",
 						assetStat.AssetCode, assetStat.AssetIssuer, fromSet, assetStat,
 					),
 				)
+			}
+
+			if contractID, ok := assetStat.GetContractID(); ok {
+				asset := contractToAsset[contractID]
+				if asset == nil {
+					return ingest.NewStateError(
+						fmt.Errorf(
+							"asset %v has contract id %v in db but contract id is not in HAS",
+							key,
+							contractID,
+						),
+					)
+				}
+
+				var assetType xdr.AssetType
+				var code, issuer string
+				if err := asset.Extract(&assetType, &code, &issuer); err != nil {
+					return ingest.NewStateError(
+						fmt.Errorf(
+							"could not parse asset %v",
+							asset,
+						),
+					)
+				}
+
+				if assetType != assetStat.AssetType ||
+					assetStat.AssetCode != code ||
+					assetStat.AssetIssuer != issuer {
+					return ingest.NewStateError(
+						fmt.Errorf(
+							"contract id %v mapped to asset %v in db does not match HAS %v",
+							contractID,
+							key,
+							code+":"+issuer,
+						),
+					)
+				}
+
+				entry, ok := contractToStats[contractID]
+				if !ok {
+					entry = history.ContractAssetStatRow{
+						ContractID: contractID[:],
+						Stat: history.ContractStat{
+							ActiveBalance:   "0",
+							ActiveHolders:   0,
+							ArchivedBalance: "0",
+							ArchivedHolders: 0,
+						},
+					}
+				}
+				if assetStat.Contracts != entry.Stat {
+					return ingest.NewStateError(
+						fmt.Errorf(
+							"contract stats for contract id %v in db %v does not match HAS %v",
+							contractID,
+							assetStat.Contracts,
+							entry.Stat,
+						),
+					)
+				}
+
+				delete(contractToAsset, contractID)
 			}
 		}
 
@@ -397,6 +514,80 @@ func checkAssetStats(ctx context.Context, set processors.AssetStatSet, q history
 				len(all),
 			),
 		)
+	}
+
+	if err := checkContractBalances(ctx, filteredBalances, q); err != nil {
+		return err
+	}
+	return nil
+}
+
+func checkContractBalances(
+	ctx context.Context,
+	balances []history.ContractAssetBalance,
+	q history.IngestionQ,
+) error {
+	for i := 0; i < len(balances); {
+		end := i + assetStatsBatchSize
+		if end > len(balances) {
+			end = len(balances)
+		}
+
+		subset := balances[i:end]
+		var keys []xdr.Hash
+		byKey := map[xdr.Hash]history.ContractAssetBalance{}
+		for _, balance := range subset {
+			var key xdr.Hash
+			copy(key[:], balance.KeyHash)
+			keys = append(keys, key)
+			byKey[key] = balance
+		}
+
+		rows, err := q.GetContractAssetBalances(ctx, keys)
+		if err != nil {
+			return err
+		}
+
+		for _, row := range rows {
+			var key xdr.Hash
+			copy(key[:], row.KeyHash)
+			expected := byKey[key]
+
+			if !bytes.Equal(row.ContractID, expected.ContractID) {
+				return ingest.NewStateError(
+					fmt.Errorf(
+						"contract balance %v has contract %v in HAS but is %v in db",
+						key,
+						expected.ContractID,
+						row.ContractID,
+					),
+				)
+			}
+
+			if row.ExpirationLedger != expected.ExpirationLedger {
+				return ingest.NewStateError(
+					fmt.Errorf(
+						"contract balance %v has expiration %v in HAS but is %v in db",
+						key,
+						expected.ExpirationLedger,
+						row.ExpirationLedger,
+					),
+				)
+			}
+
+			if row.Amount != expected.Amount {
+				return ingest.NewStateError(
+					fmt.Errorf(
+						"contract balance %v has amount %v in HAS but is %v in db",
+						key,
+						expected.Amount,
+						row.Amount,
+					),
+				)
+			}
+		}
+
+		i = end
 	}
 	return nil
 }

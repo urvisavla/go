@@ -30,11 +30,7 @@ func (reingestHistoryRangeState) GetState() State {
 	return ReingestHistoryRange
 }
 
-func (h reingestHistoryRangeState) ingestRange(s *system, fromLedger, toLedger uint32) error {
-	if s.historyQ.GetTx() == nil {
-		return errors.New("expected transaction to be present")
-	}
-
+func (h reingestHistoryRangeState) ingestRange(s *system, fromLedger, toLedger uint32, execBatchInTx bool) error {
 	if s.maxLedgerPerFlush < 1 {
 		return errors.New("invalid maxLedgerPerFlush, must be greater than 0")
 	}
@@ -48,7 +44,7 @@ func (h reingestHistoryRangeState) ingestRange(s *system, fromLedger, toLedger u
 		return errors.Wrap(err, "Invalid range")
 	}
 
-	err = s.historyQ.DeleteRangeAll(s.ctx, start, end)
+	_, err = s.historyQ.DeleteRangeAll(s.ctx, start, end)
 	if err != nil {
 		return errors.Wrap(err, "error in DeleteRangeAll")
 	}
@@ -75,7 +71,7 @@ func (h reingestHistoryRangeState) ingestRange(s *system, fromLedger, toLedger u
 		ledgers = append(ledgers, ledgerCloseMeta)
 
 		if len(ledgers)%int(s.maxLedgerPerFlush) == 0 {
-			if err = s.runner.RunTransactionProcessorsOnLedgers(ledgers); err != nil {
+			if err = s.runner.RunTransactionProcessorsOnLedgers(ledgers, execBatchInTx); err != nil {
 				return errors.Wrapf(err, "error processing ledger range %d - %d", ledgers[0].LedgerSequence(), ledgers[len(ledgers)-1].LedgerSequence())
 			}
 			ledgers = ledgers[0:0]
@@ -83,7 +79,7 @@ func (h reingestHistoryRangeState) ingestRange(s *system, fromLedger, toLedger u
 	}
 
 	if len(ledgers) > 0 {
-		if err = s.runner.RunTransactionProcessorsOnLedgers(ledgers); err != nil {
+		if err = s.runner.RunTransactionProcessorsOnLedgers(ledgers, execBatchInTx); err != nil {
 			return errors.Wrapf(err, "error processing ledger range %d - %d", ledgers[0].LedgerSequence(), ledgers[len(ledgers)-1].LedgerSequence())
 		}
 	}
@@ -124,13 +120,14 @@ func (h reingestHistoryRangeState) run(s *system) (transition, error) {
 		h.fromLedger = 2
 	}
 
-	startTime := time.Now()
+	var startTime time.Time
 
 	if h.force {
 		if t, err := h.prepareRange(s); err != nil {
 			return t, err
 		}
 
+		startTime = time.Now()
 		if err := s.historyQ.Begin(s.ctx); err != nil {
 			return stop(), errors.Wrap(err, "Error starting a transaction")
 		}
@@ -141,7 +138,7 @@ func (h reingestHistoryRangeState) run(s *system) (transition, error) {
 			return stop(), errors.Wrap(err, getLastIngestedErrMsg)
 		}
 
-		if ingestErr := h.ingestRange(s, h.fromLedger, h.toLedger); ingestErr != nil {
+		if ingestErr := h.ingestRange(s, h.fromLedger, h.toLedger, false); ingestErr != nil {
 			if err := s.historyQ.Commit(); err != nil {
 				return stop(), errors.Wrap(ingestErr, commitErrMsg)
 			}
@@ -167,23 +164,10 @@ func (h reingestHistoryRangeState) run(s *system) (transition, error) {
 			return t, err
 		}
 
-		if err := s.historyQ.Begin(s.ctx); err != nil {
-			return stop(), errors.Wrap(err, "Error starting a transaction")
-		}
-		defer s.historyQ.Rollback()
-
-		if e := h.ingestRange(s, h.fromLedger, h.toLedger); e != nil {
+		startTime = time.Now()
+		if e := h.ingestRange(s, h.fromLedger, h.toLedger, true); e != nil {
 			return stop(), e
 		}
-
-		if e := s.historyQ.Commit(); e != nil {
-			return stop(), errors.Wrap(e, commitErrMsg)
-		}
-	}
-
-	err := s.historyQ.RebuildTradeAggregationBuckets(s.ctx, h.fromLedger, h.toLedger, s.config.RoundingSlippageFilter)
-	if err != nil {
-		return stop(), errors.Wrap(err, "Error rebuilding trade aggregations")
 	}
 
 	log.WithFields(logpkg.F{

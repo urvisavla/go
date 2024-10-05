@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -51,19 +52,26 @@ const (
 	NetworkPassphraseFlagName = "network-passphrase"
 	// HistoryArchiveURLsFlagName is the command line flag for specifying the history archive URLs
 	HistoryArchiveURLsFlagName = "history-archive-urls"
+	// HistoryArchiveCaching is the flag for controlling whether or not there's
+	// an on-disk cache for history archive downloads
+	HistoryArchiveCachingFlagName = "history-archive-caching"
 	// NetworkFlagName is the command line flag for specifying the "network"
 	NetworkFlagName = "network"
 	// EnableIngestionFilteringFlagName is the command line flag for enabling the experimental ingestion filtering feature (now enabled by default)
 	EnableIngestionFilteringFlagName = "exp-enable-ingestion-filtering"
 	// DisableTxSubFlagName is the command line flag for disabling transaction submission feature of Horizon
 	DisableTxSubFlagName = "disable-tx-sub"
+	// SkipTxmeta is the command line flag for disabling persistence of tx meta in history transaction table
+	SkipTxmeta = "skip-txmeta"
 
 	// StellarPubnet is a constant representing the Stellar public network
 	StellarPubnet = "pubnet"
 	// StellarTestnet is a constant representing the Stellar test network
 	StellarTestnet = "testnet"
 
-	defaultMaxHTTPRequestSize = uint(200 * 1024)
+	defaultMaxConcurrentRequests = uint(1000)
+	defaultMaxHTTPRequestSize    = uint(200 * 1024)
+	clientQueryTimeoutNotSet     = -1
 )
 
 var (
@@ -234,13 +242,12 @@ func Flags() (*Config, support.ConfigOptions) {
 			OptType:     types.Bool,
 			FlagDefault: true,
 			Required:    false,
-			Usage: `when enabled, Horizon ingestion will instruct the captive
-			              core invocation to use an external db url for ledger states rather than in memory(RAM).\n 
-						  Will result in several GB of space shifting out of RAM and to the external db persistence.\n
-						  The external db url is determined by the presence of DATABASE parameter in the captive-core-config-path or\n
-						  or if absent, the db will default to sqlite and the db file will be stored at location derived from captive-core-storage-path parameter.`,
+			Usage:       `when enabled, Horizon ingestion will instruct the captive core invocation to use an external db url for ledger states rather than in memory(RAM). Will result in several GB of space shifting out of RAM and to the external db persistence. The external db url is determined by the presence of DATABASE parameter in the captive-core-config-path or if absent, the db will default to sqlite and the db file will be stored at location derived from captive-core-storage-path parameter.`,
 			CustomSetValue: func(opt *support.ConfigOption) error {
 				if val := viper.GetBool(opt.Name); val {
+					stdLog.Printf("The usage of the flag --captive-core-use-db has been deprecated. " +
+						"Setting it to false to achieve in-memory functionality on captive core will be removed in " +
+						"future releases. We recommend removing usage of this flag now in preparation.")
 					config.CaptiveCoreConfigUseDB = val
 					config.CaptiveCoreTomlParams.UseDB = val
 				}
@@ -272,12 +279,8 @@ func Flags() (*Config, support.ConfigOptions) {
 			OptType:     types.String,
 			FlagDefault: "",
 			Required:    false,
-			ConfigKey:   &config.EnableIngestionFiltering,
 			CustomSetValue: func(opt *support.ConfigOption) error {
-
-				// Always enable ingestion filtering by default.
-				config.EnableIngestionFiltering = true
-
+				// ingestion filtering is always enabled, it has no rules by default.
 				if val := viper.GetString(opt.Name); val != "" {
 					stdLog.Printf(
 						"DEPRECATED - No ingestion filter rules are defined by default, which equates to " +
@@ -338,11 +341,7 @@ func Flags() (*Config, support.ConfigOptions) {
 			Hidden:   true,
 			CustomSetValue: func(opt *support.ConfigOption) error {
 				if val := viper.GetString(opt.Name); val != "" {
-					stdLog.Printf(
-						"DEPRECATED - The usage of the flag --stellar-core-db-url has been deprecated. " +
-							"Horizon now uses Captive-Core ingestion by default and this flag will soon be removed in " +
-							"the future.",
-					)
+					return fmt.Errorf("flag --stellar-core-db-url and environment variable STELLAR_CORE_DATABASE_URL have been removed and no longer valid, must use captive core configuration for ingestion")
 				}
 				return nil
 			},
@@ -372,6 +371,14 @@ func Flags() (*Config, support.ConfigOptions) {
 				return nil
 			},
 			Usage:          "comma-separated list of stellar history archives to connect with",
+			UsedInCommands: IngestionCommands,
+		},
+		&support.ConfigOption{
+			Name:           HistoryArchiveCachingFlagName,
+			ConfigKey:      &config.HistoryArchiveCaching,
+			OptType:        types.Bool,
+			FlagDefault:    true,
+			Usage:          "adds caching for history archive downloads (requires an add'l 10GB of disk space on mainnet)",
 			UsedInCommands: IngestionCommands,
 		},
 		&support.ConfigOption{
@@ -433,11 +440,44 @@ func Flags() (*Config, support.ConfigOptions) {
 			UsedInCommands: ApiServerCommands,
 		},
 		&support.ConfigOption{
+			Name:        "client-query-timeout",
+			ConfigKey:   &config.ClientQueryTimeout,
+			OptType:     types.Int,
+			FlagDefault: clientQueryTimeoutNotSet,
+			CustomSetValue: func(co *support.ConfigOption) error {
+				if !support.IsExplicitlySet(co) {
+					*(co.ConfigKey.(*time.Duration)) = time.Duration(co.FlagDefault.(int))
+					return nil
+				}
+				duration := viper.GetInt(co.Name)
+				if duration < 0 {
+					return fmt.Errorf("%s cannot be negative", co.Name)
+				}
+				*(co.ConfigKey.(*time.Duration)) = time.Duration(duration) * time.Second
+				return nil
+			},
+			Usage: "defines the timeout for when horizon will cancel all postgres queries connected to an HTTP request. The timeout is measured in seconds since the start of the HTTP request. Note, this timeout does not apply to POST /transactions. " +
+				"The difference between client-query-timeout and connection-timeout is that connection-timeout applies a postgres statement timeout whereas client-query-timeout will send an additional request to postgres to cancel the ongoing query. " +
+				"Generally, client-query-timeout should be configured to be higher than connection-timeout to allow the postgres statement timeout to kill long running queries without having to send the additional cancel request to postgres. " +
+				"By default, client-query-timeout will be set to twice the connection-timeout. Setting client-query-timeout to 0 will disable the timeout which means that Horizon will never kill long running queries using the cancel request, however, " +
+				"long running queries can still be killed through the postgres statement timeout which is configured via the connection-timeout flag.",
+			UsedInCommands: ApiServerCommands,
+		},
+		&support.ConfigOption{
 			Name:           "max-http-request-size",
 			ConfigKey:      &config.MaxHTTPRequestSize,
 			OptType:        types.Uint,
 			FlagDefault:    defaultMaxHTTPRequestSize,
 			Usage:          "sets the limit on the maximum allowed http request payload size, default is 200kb, to disable the limit check, set to 0, only do so if you acknowledge the implications of accepting unbounded http request payload sizes.",
+			UsedInCommands: ApiServerCommands,
+		},
+		&support.ConfigOption{
+			Name:        "max-concurrent-requests",
+			ConfigKey:   &config.MaxConcurrentRequests,
+			OptType:     types.Uint,
+			FlagDefault: defaultMaxConcurrentRequests,
+			Usage: "sets the limit on the maximum number of concurrent http requests, default is 1000, to disable the limit set to 0. " +
+				"If Horizon receives a request which would exceed the limit of concurrent http requests, Horizon will respond with a 503 status code.",
 			UsedInCommands: ApiServerCommands,
 		},
 		&support.ConfigOption{
@@ -595,18 +635,64 @@ func Flags() (*Config, support.ConfigOptions) {
 		&support.ConfigOption{
 			Name:           "cursor-name",
 			EnvVar:         "CURSOR_NAME",
-			ConfigKey:      &config.CursorName,
 			OptType:        types.String,
-			FlagDefault:    "HORIZON",
-			Usage:          "ingestor cursor used by horizon to ingest from stellar core. must be uppercase and unique for each horizon instance ingesting from that core instance.",
+			Hidden:         true,
 			UsedInCommands: IngestionCommands,
+			CustomSetValue: func(opt *support.ConfigOption) error {
+				if val := viper.GetString(opt.Name); val != "" {
+					return fmt.Errorf("flag --cursor-name has been removed and no longer valid, must use captive core configuration for ingestion")
+				}
+				return nil
+			},
 		},
 		&support.ConfigOption{
 			Name:           "history-retention-count",
 			ConfigKey:      &config.HistoryRetentionCount,
 			OptType:        types.Uint,
 			FlagDefault:    uint(0),
-			Usage:          "the minimum number of ledgers to maintain within horizon's history tables.  0 signifies an unlimited number of ledgers will be retained",
+			Usage:          "the minimum number of ledgers to maintain within Horizon's history tables (0 = retain an unlimited number of ledgers)",
+			UsedInCommands: IngestionCommands,
+		},
+		&support.ConfigOption{
+			Name:           "history-retention-reap-count",
+			ConfigKey:      &config.HistoryRetentionReapCount,
+			OptType:        types.Uint,
+			FlagDefault:    uint(50_000),
+			Usage:          "the batch size (in ledgers) to remove per reap from the Horizon database",
+			UsedInCommands: IngestionCommands,
+			CustomSetValue: func(opt *support.ConfigOption) error {
+				val := viper.GetUint(opt.Name)
+				if val <= 0 || val > 500_000 {
+					return fmt.Errorf("flag --history-retention-reap-count must be in range [1, 500,000]")
+				}
+				*(opt.ConfigKey.(*uint)) = val
+				return nil
+			},
+		},
+		&support.ConfigOption{
+			Name:        "reap-frequency",
+			ConfigKey:   &config.ReapFrequency,
+			OptType:     types.Uint,
+			FlagDefault: uint(720),
+			Usage: "the frequency in units of ledgers for how often history is reaped. " +
+				"A value of 1 implies history is trimmed after every ledger. " +
+				"A value of 2 implies history is trimmed on every second ledger.",
+			UsedInCommands: IngestionCommands,
+			CustomSetValue: func(opt *support.ConfigOption) error {
+				val := viper.GetUint(opt.Name)
+				if val <= 0 {
+					return fmt.Errorf("flag --reap-frequency must be positive")
+				}
+				*(opt.ConfigKey.(*uint)) = val
+				return nil
+			},
+		},
+		{
+			Name:           "reap-lookup-tables",
+			ConfigKey:      &config.ReapLookupTables,
+			OptType:        types.Bool,
+			FlagDefault:    true,
+			Usage:          "enables the reaping of history lookup tables.",
 			UsedInCommands: IngestionCommands,
 		},
 		&support.ConfigOption{
@@ -619,18 +705,22 @@ func Flags() (*Config, support.ConfigOptions) {
 		},
 		&support.ConfigOption{
 			Name:           "skip-cursor-update",
-			ConfigKey:      &config.SkipCursorUpdate,
-			OptType:        types.Bool,
-			FlagDefault:    false,
-			Usage:          "causes the ingester to skip reporting the last imported ledger state to stellar-core",
+			OptType:        types.String,
+			Hidden:         true,
 			UsedInCommands: IngestionCommands,
+			CustomSetValue: func(opt *support.ConfigOption) error {
+				if val := viper.GetString(opt.Name); val != "" {
+					return fmt.Errorf("flag --skip-cursor-update has been removed and no longer valid, must use captive core configuration for ingestion")
+				}
+				return nil
+			},
 		},
 		&support.ConfigOption{
 			Name:           "ingest-disable-state-verification",
 			ConfigKey:      &config.IngestDisableStateVerification,
 			OptType:        types.Bool,
 			FlagDefault:    false,
-			Usage:          "ingestion system runs a verification routing to compare state in local database with history buckets, this can be disabled however it's not recommended",
+			Usage:          "disable periodic verification of ledger state in horizon db (not recommended)",
 			UsedInCommands: IngestionCommands,
 		},
 		&support.ConfigOption{
@@ -726,6 +816,15 @@ func Flags() (*Config, support.ConfigOptions) {
 				HistoryArchiveURLsFlagName, CaptiveCoreConfigPathName),
 			UsedInCommands: IngestionCommands,
 		},
+		&support.ConfigOption{
+			Name:           SkipTxmeta,
+			ConfigKey:      &config.SkipTxmeta,
+			OptType:        types.Bool,
+			FlagDefault:    false,
+			Required:       false,
+			Usage:          "excludes tx meta from persistence on transaction history",
+			UsedInCommands: IngestionCommands,
+		},
 	}
 
 	return config, flags
@@ -733,7 +832,7 @@ func Flags() (*Config, support.ConfigOptions) {
 
 // NewAppFromFlags constructs a new Horizon App from the given command line flags
 func NewAppFromFlags(config *Config, flags support.ConfigOptions) (*App, error) {
-	err := ApplyFlags(config, flags, ApplyOptions{RequireCaptiveCoreFullConfig: true, AlwaysIngest: false})
+	err := ApplyFlags(config, flags, ApplyOptions{RequireCaptiveCoreFullConfig: true})
 	if err != nil {
 		return nil, err
 	}
@@ -751,35 +850,9 @@ func NewAppFromFlags(config *Config, flags support.ConfigOptions) (*App, error) 
 }
 
 type ApplyOptions struct {
-	AlwaysIngest                 bool
 	RequireCaptiveCoreFullConfig bool
+	NoCaptiveCore                bool
 }
-
-type networkConfig struct {
-	defaultConfig      []byte
-	HistoryArchiveURLs []string
-	NetworkPassphrase  string
-}
-
-var (
-	//go:embed configs/captive-core-pubnet.cfg
-	PubnetDefaultConfig []byte
-
-	//go:embed configs/captive-core-testnet.cfg
-	TestnetDefaultConfig []byte
-
-	PubnetConf = networkConfig{
-		defaultConfig:      PubnetDefaultConfig,
-		HistoryArchiveURLs: network.PublicNetworkhistoryArchiveURLs,
-		NetworkPassphrase:  network.PublicNetworkPassphrase,
-	}
-
-	TestnetConf = networkConfig{
-		defaultConfig:      TestnetDefaultConfig,
-		HistoryArchiveURLs: network.TestNetworkhistoryArchiveURLs,
-		NetworkPassphrase:  network.TestNetworkPassphrase,
-	}
-)
 
 // getCaptiveCoreBinaryPath retrieves the path of the Captive Core binary
 // Returns the path or an error if the binary is not found
@@ -791,69 +864,32 @@ func getCaptiveCoreBinaryPath() (string, error) {
 	return result, nil
 }
 
-// getCaptiveCoreConfigFromNetworkParameter returns the default Captive Core configuration based on the network.
-func getCaptiveCoreConfigFromNetworkParameter(config *Config) (networkConfig, error) {
-	var defaultNetworkConfig networkConfig
-
-	if config.NetworkPassphrase != "" {
-		return defaultNetworkConfig, fmt.Errorf("invalid config: %s parameter not allowed with the %s parameter",
-			NetworkPassphraseFlagName, NetworkFlagName)
-	}
-
-	if len(config.HistoryArchiveURLs) > 0 {
-		return defaultNetworkConfig, fmt.Errorf("invalid config: %s parameter not allowed with the %s parameter",
-			HistoryArchiveURLsFlagName, NetworkFlagName)
-	}
-
-	switch config.Network {
-	case StellarPubnet:
-		defaultNetworkConfig = PubnetConf
-	case StellarTestnet:
-		defaultNetworkConfig = TestnetConf
-	default:
-		return defaultNetworkConfig, fmt.Errorf("no default configuration found for network %s", config.Network)
-	}
-
-	return defaultNetworkConfig, nil
-}
-
 // setCaptiveCoreConfiguration prepares configuration for the Captive Core
 func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 	stdLog.Println("Preparing captive core...")
 
+	var err error
 	// If the user didn't specify a Stellar Core binary, we can check the
 	// $PATH and possibly fill it in for them.
 	if config.CaptiveCoreBinaryPath == "" {
-		var err error
 		if config.CaptiveCoreBinaryPath, err = getCaptiveCoreBinaryPath(); err != nil {
 			return fmt.Errorf("captive core requires %s", StellarCoreBinaryPathName)
 		}
 	}
 
-	var defaultNetworkConfig networkConfig
-	if config.Network != "" {
-		var err error
-		defaultNetworkConfig, err = getCaptiveCoreConfigFromNetworkParameter(config)
-		if err != nil {
-			return err
-		}
-		config.NetworkPassphrase = defaultNetworkConfig.NetworkPassphrase
-		config.HistoryArchiveURLs = defaultNetworkConfig.HistoryArchiveURLs
-	} else {
-		if config.NetworkPassphrase == "" {
-			return fmt.Errorf("%s must be set", NetworkPassphraseFlagName)
-		}
+	var defaultCaptiveCoreConfig []byte
+	switch config.Network {
+	case StellarPubnet:
+		defaultCaptiveCoreConfig = ledgerbackend.PubnetDefaultConfig
+	case StellarTestnet:
 
-		if len(config.HistoryArchiveURLs) == 0 {
-			return fmt.Errorf("%s must be set", HistoryArchiveURLsFlagName)
-		}
+		defaultCaptiveCoreConfig = ledgerbackend.TestnetDefaultConfig
 	}
 
 	config.CaptiveCoreTomlParams.CoreBinaryPath = config.CaptiveCoreBinaryPath
 	config.CaptiveCoreTomlParams.HistoryArchiveURLs = config.HistoryArchiveURLs
 	config.CaptiveCoreTomlParams.NetworkPassphrase = config.NetworkPassphrase
 
-	var err error
 	if config.CaptiveCoreConfigPath != "" {
 		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreTomlFromFile(config.CaptiveCoreConfigPath,
 			config.CaptiveCoreTomlParams)
@@ -867,8 +903,8 @@ func setCaptiveCoreConfiguration(config *Config, options ApplyOptions) error {
 		if err != nil {
 			return errors.Wrap(err, "invalid captive core toml file")
 		}
-	} else if len(defaultNetworkConfig.defaultConfig) != 0 {
-		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreTomlFromData(defaultNetworkConfig.defaultConfig,
+	} else if len(defaultCaptiveCoreConfig) != 0 {
+		config.CaptiveCoreToml, err = ledgerbackend.NewCaptiveCoreTomlFromData(defaultCaptiveCoreConfig,
 			config.CaptiveCoreTomlParams)
 		if err != nil {
 			return errors.Wrap(err, "invalid captive core toml file")
@@ -911,10 +947,6 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 		return err
 	}
 
-	if options.AlwaysIngest {
-		config.Ingest = true
-	}
-
 	if config.Ingest {
 		// Migrations should be checked as early as possible. Apply and check
 		// only on ingesting instances which are required to have write-access
@@ -930,9 +962,15 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 			return err
 		}
 
-		err := setCaptiveCoreConfiguration(config, options)
-		if err != nil {
-			return errors.Wrap(err, "error generating captive core configuration")
+		if err := setNetworkConfiguration(config); err != nil {
+			return err
+		}
+
+		if !options.NoCaptiveCore {
+			err := setCaptiveCoreConfiguration(config, options)
+			if err != nil {
+				return errors.Wrap(err, "error generating captive core configuration")
+			}
 		}
 	}
 
@@ -961,5 +999,44 @@ func ApplyFlags(config *Config, flags support.ConfigOptions, options ApplyOption
 			" If Horizon is behind both, use --behind-cloudflare only")
 	}
 
+	if config.ClientQueryTimeout == clientQueryTimeoutNotSet {
+		// the default value for cancel-db-query-timeout is twice the connection-timeout
+		config.ClientQueryTimeout = config.ConnectionTimeout * 2
+	}
+
+	return nil
+}
+
+func setNetworkConfiguration(config *Config) error {
+	if config.Network != "" {
+		if config.NetworkPassphrase != "" {
+			return fmt.Errorf("invalid config: %s parameter not allowed with the %s parameter",
+				NetworkPassphraseFlagName, NetworkFlagName)
+		}
+
+		if len(config.HistoryArchiveURLs) > 0 {
+			return fmt.Errorf("invalid config: %s parameter not allowed with the %s parameter",
+				HistoryArchiveURLsFlagName, NetworkFlagName)
+		}
+
+		switch config.Network {
+		case StellarPubnet:
+			config.NetworkPassphrase = network.PublicNetworkPassphrase
+			config.HistoryArchiveURLs = network.PublicNetworkhistoryArchiveURLs
+		case StellarTestnet:
+			config.NetworkPassphrase = network.TestNetworkPassphrase
+			config.HistoryArchiveURLs = network.TestNetworkhistoryArchiveURLs
+		default:
+			return fmt.Errorf("no default configuration found for network %s", config.Network)
+		}
+	}
+
+	if config.NetworkPassphrase == "" {
+		return fmt.Errorf("%s must be set", NetworkPassphraseFlagName)
+	}
+
+	if len(config.HistoryArchiveURLs) == 0 {
+		return fmt.Errorf("%s must be set", HistoryArchiveURLsFlagName)
+	}
 	return nil
 }

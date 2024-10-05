@@ -23,7 +23,7 @@ func TestEffectsForLiquidityPool(t *testing.T) {
 	// Insert Effect
 	address := "GAQAA5L65LSYH7CQ3VTJ7F3HHLGCL3DSLAR2Y47263D56MNNGHSQSTVY"
 	muxedAddres := "MAQAA5L65LSYH7CQ3VTJ7F3HHLGCL3DSLAR2Y47263D56MNNGHSQSAAAAAAAAAAE2LP26"
-	accountLoader := NewAccountLoader()
+	accountLoader := NewAccountLoader(ConcurrentInserts)
 
 	builder := q.NewEffectBatchInsertBuilder()
 	sequence := int32(56)
@@ -47,7 +47,7 @@ func TestEffectsForLiquidityPool(t *testing.T) {
 
 	// Insert Liquidity Pool history
 	liquidityPoolID := "abcde"
-	lpLoader := NewLiquidityPoolLoader()
+	lpLoader := NewLiquidityPoolLoader(ConcurrentInserts)
 
 	operationBuilder := q.NewOperationLiquidityPoolBatchInsertBuilder()
 	tt.Assert.NoError(operationBuilder.Add(opID, lpLoader.GetFuture(liquidityPoolID)))
@@ -57,11 +57,11 @@ func TestEffectsForLiquidityPool(t *testing.T) {
 	tt.Assert.NoError(q.Commit())
 
 	var result []Effect
-	err = q.Effects().ForLiquidityPool(tt.Ctx, db2.PageQuery{
+	result, err = q.EffectsForLiquidityPool(tt.Ctx, liquidityPoolID, db2.PageQuery{
 		Cursor: "0-0",
 		Order:  "asc",
 		Limit:  10,
-	}, liquidityPoolID).Select(tt.Ctx, &result)
+	})
 	tt.Assert.NoError(err)
 
 	tt.Assert.Len(result, 1)
@@ -78,7 +78,7 @@ func TestEffectsForTrustlinesSponsorshipEmptyAssetType(t *testing.T) {
 
 	address := "GAQAA5L65LSYH7CQ3VTJ7F3HHLGCL3DSLAR2Y47263D56MNNGHSQSTVY"
 	muxedAddres := "MAQAA5L65LSYH7CQ3VTJ7F3HHLGCL3DSLAR2Y47263D56MNNGHSQSAAAAAAAAAAE2LP26"
-	accountLoader := NewAccountLoader()
+	accountLoader := NewAccountLoader(ConcurrentInserts)
 
 	builder := q.NewEffectBatchInsertBuilder()
 	sequence := int32(56)
@@ -156,8 +156,12 @@ func TestEffectsForTrustlinesSponsorshipEmptyAssetType(t *testing.T) {
 	tt.Require.NoError(builder.Exec(tt.Ctx, q))
 	tt.Assert.NoError(q.Commit())
 
-	var results []Effect
-	tt.Require.NoError(q.Effects().Select(tt.Ctx, &results))
+	results, err := q.Effects(tt.Ctx, db2.PageQuery{
+		Cursor: "0-0",
+		Order:  "asc",
+		Limit:  200,
+	})
+	tt.Require.NoError(err)
 	tt.Require.Len(results, len(tests))
 
 	for i, test := range tests {

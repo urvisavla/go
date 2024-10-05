@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/stellar/go/services/horizon/internal/ledger"
 	"testing"
 	"time"
 
@@ -155,6 +156,17 @@ func (suite *SystemTestSuite) TestTimeoutDuringSequenceLoop() {
 	suite.db.On("GetSequenceNumbers", suite.ctx, []string{suite.unmuxedSource.Address()}).
 		Return(map[string]uint64{suite.unmuxedSource.Address(): 0}, nil)
 
+	mockLedgerState := &MockLedgerState{}
+	mockLedgerState.On("CurrentStatus").Return(ledger.Status{
+		CoreStatus: ledger.CoreStatus{
+			CoreLatest: 3,
+		},
+		HorizonStatus: ledger.HorizonStatus{
+			HistoryLatest: 1,
+		},
+	}).Twice()
+	suite.system.LedgerState = mockLedgerState
+
 	r := <-suite.system.Submit(
 		suite.ctx,
 		suite.successTx.Transaction.TxEnvelope,
@@ -186,6 +198,17 @@ func (suite *SystemTestSuite) TestClientDisconnectedDuringSequenceLoop() {
 		Once()
 	suite.db.On("GetSequenceNumbers", suite.ctx, []string{suite.unmuxedSource.Address()}).
 		Return(map[string]uint64{suite.unmuxedSource.Address(): 0}, nil)
+
+	mockLedgerState := &MockLedgerState{}
+	mockLedgerState.On("CurrentStatus").Return(ledger.Status{
+		CoreStatus: ledger.CoreStatus{
+			CoreLatest: 3,
+		},
+		HorizonStatus: ledger.HorizonStatus{
+			HistoryLatest: 1,
+		},
+	}).Once()
+	suite.system.LedgerState = mockLedgerState
 
 	r := <-suite.system.Submit(
 		suite.ctx,
@@ -227,7 +250,6 @@ func (suite *SystemTestSuite) TestSubmit_NotFoundError() {
 	assert.True(suite.T(), suite.submitter.WasSubmittedTo)
 	assert.Equal(suite.T(), float64(0), getMetricValue(suite.system.Metrics.SuccessfulSubmissionsCounter).GetCounter().GetValue())
 	assert.Equal(suite.T(), float64(1), getMetricValue(suite.system.Metrics.FailedSubmissionsCounter).GetCounter().GetValue())
-	assert.Equal(suite.T(), uint64(1), getMetricValue(suite.system.Metrics.SubmissionDuration).GetSummary().GetSampleCount())
 }
 
 // If the error is bad_seq and the result at the transaction's sequence number is for the same hash, return result.
@@ -252,6 +274,17 @@ func (suite *SystemTestSuite) TestSubmit_BadSeq() {
 			*ptr = suite.successTx.Transaction
 		}).
 		Return(nil).Once()
+
+	mockLedgerState := &MockLedgerState{}
+	mockLedgerState.On("CurrentStatus").Return(ledger.Status{
+		CoreStatus: ledger.CoreStatus{
+			CoreLatest: 3,
+		},
+		HorizonStatus: ledger.HorizonStatus{
+			HistoryLatest: 1,
+		},
+	}).Twice()
+	suite.system.LedgerState = mockLedgerState
 
 	r := <-suite.system.Submit(
 		suite.ctx,
@@ -281,6 +314,17 @@ func (suite *SystemTestSuite) TestSubmit_BadSeqNotFound() {
 		Return(map[string]uint64{suite.unmuxedSource.Address(): 1}, nil).
 		Once()
 
+	mockLedgerState := &MockLedgerState{}
+	mockLedgerState.On("CurrentStatus").Return(ledger.Status{
+		CoreStatus: ledger.CoreStatus{
+			CoreLatest: 3,
+		},
+		HorizonStatus: ledger.HorizonStatus{
+			HistoryLatest: 1,
+		},
+	}).Times(3)
+	suite.system.LedgerState = mockLedgerState
+
 	// set poll interval to 1ms so we don't need to wait 3 seconds for the test to complete
 	suite.system.Init()
 	suite.system.accountSeqPollInterval = time.Millisecond
@@ -293,6 +337,54 @@ func (suite *SystemTestSuite) TestSubmit_BadSeqNotFound() {
 	)
 
 	assert.NotNil(suite.T(), r.Err)
+	assert.True(suite.T(), suite.submitter.WasSubmittedTo)
+}
+
+// If error is bad_seq and horizon and core are in sync, then return error
+func (suite *SystemTestSuite) TestSubmit_BadSeqErrorWhenInSync() {
+	suite.submitter.R = suite.badSeq
+	suite.db.On("PreFilteredTransactionByHash", suite.ctx, mock.Anything, suite.successTx.Transaction.TransactionHash).
+		Return(sql.ErrNoRows).Twice()
+	suite.db.On("NoRows", sql.ErrNoRows).Return(true).Twice()
+	suite.db.On("TransactionByHash", suite.ctx, mock.Anything, suite.successTx.Transaction.TransactionHash).
+		Return(sql.ErrNoRows).Twice()
+	suite.db.On("NoRows", sql.ErrNoRows).Return(true).Twice()
+	suite.db.On("GetSequenceNumbers", suite.ctx, []string{suite.unmuxedSource.Address()}).
+		Return(map[string]uint64{suite.unmuxedSource.Address(): 0}, nil).
+		Twice()
+
+	mockLedgerState := &MockLedgerState{}
+	mockLedgerState.On("CurrentStatus").Return(ledger.Status{
+		CoreStatus: ledger.CoreStatus{
+			CoreLatest: 3,
+		},
+		HorizonStatus: ledger.HorizonStatus{
+			HistoryLatest: 1,
+		},
+	}).Once()
+	mockLedgerState.On("CurrentStatus").Return(ledger.Status{
+		CoreStatus: ledger.CoreStatus{
+			CoreLatest: 1,
+		},
+		HorizonStatus: ledger.HorizonStatus{
+			HistoryLatest: 1,
+		},
+	}).Once()
+	suite.system.LedgerState = mockLedgerState
+
+	// set poll interval to 1ms so we don't need to wait 3 seconds for the test to complete
+	suite.system.Init()
+	suite.system.accountSeqPollInterval = time.Millisecond
+
+	r := <-suite.system.Submit(
+		suite.ctx,
+		suite.successTx.Transaction.TxEnvelope,
+		suite.successXDR,
+		suite.successTx.Transaction.TransactionHash,
+	)
+
+	assert.NotNil(suite.T(), r.Err)
+	assert.Equal(suite.T(), r.Err.Error(), "tx failed: AAAAAAAAAAD////7AAAAAA==") // decodes to txBadSeq
 	assert.True(suite.T(), suite.submitter.WasSubmittedTo)
 }
 
@@ -315,7 +407,6 @@ func (suite *SystemTestSuite) TestSubmit_OpenTransactionList() {
 	assert.Equal(suite.T(), suite.successTx.Transaction.TransactionHash, pending[0])
 	assert.Equal(suite.T(), float64(1), getMetricValue(suite.system.Metrics.SuccessfulSubmissionsCounter).GetCounter().GetValue())
 	assert.Equal(suite.T(), float64(0), getMetricValue(suite.system.Metrics.FailedSubmissionsCounter).GetCounter().GetValue())
-	assert.Equal(suite.T(), uint64(1), getMetricValue(suite.system.Metrics.SubmissionDuration).GetSummary().GetSampleCount())
 }
 
 // Tick should be a no-op if there are no open submissions.

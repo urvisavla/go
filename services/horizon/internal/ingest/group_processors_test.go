@@ -23,6 +23,10 @@ type mockHorizonChangeProcessor struct {
 	mock.Mock
 }
 
+func (m *mockHorizonChangeProcessor) Name() string {
+	return "mockHorizonChangeProcessor"
+}
+
 func (m *mockHorizonChangeProcessor) ProcessChange(ctx context.Context, change ingest.Change) error {
 	args := m.Called(ctx, change)
 	return args.Error(0)
@@ -37,6 +41,10 @@ var _ horizonTransactionProcessor = (*mockHorizonTransactionProcessor)(nil)
 
 type mockHorizonTransactionProcessor struct {
 	mock.Mock
+}
+
+func (m *mockHorizonTransactionProcessor) Name() string {
+	return "mockHorizonTransactionProcessor"
 }
 
 func (m *mockHorizonTransactionProcessor) ProcessTransaction(lcm xdr.LedgerCloseMeta, transaction ingest.LedgerTransaction) error {
@@ -149,7 +157,7 @@ func (s *GroupTransactionProcessorsTestSuiteLedger) SetupTest() {
 	s.processors = newGroupTransactionProcessors([]horizonTransactionProcessor{
 		s.processorA,
 		s.processorB,
-	}, nil, statsProcessor, tradesProcessor)
+	}, statsProcessor, tradesProcessor)
 	s.session = &db.MockSession{}
 }
 

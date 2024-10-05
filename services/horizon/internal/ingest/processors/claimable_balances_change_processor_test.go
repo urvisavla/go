@@ -8,10 +8,11 @@ import (
 
 	"github.com/guregu/null"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/stellar/go/ingest"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/xdr"
-	"github.com/stretchr/testify/suite"
 )
 
 func TestClaimableBalancesChangeProcessorTestSuiteState(t *testing.T) {
@@ -42,6 +43,8 @@ func (s *ClaimableBalancesChangeProcessorTestSuiteState) SetupTest() {
 
 	s.mockClaimantsBatchInsertBuilder.On("Exec", s.ctx).Return(nil)
 	s.mockClaimableBalanceBatchInsertBuilder.On("Exec", s.ctx).Return(nil)
+	s.mockClaimantsBatchInsertBuilder.On("Len").Return(1).Maybe()
+	s.mockClaimableBalanceBatchInsertBuilder.On("Len").Return(1).Maybe()
 
 	s.processor = NewClaimableBalancesChangeProcessor(s.mockQ)
 }
@@ -139,6 +142,8 @@ func (s *ClaimableBalancesChangeProcessorTestSuiteLedger) SetupTest() {
 
 	s.mockClaimantsBatchInsertBuilder.On("Exec", s.ctx).Return(nil)
 	s.mockClaimableBalanceBatchInsertBuilder.On("Exec", s.ctx).Return(nil)
+	s.mockClaimantsBatchInsertBuilder.On("Len").Return(1).Maybe()
+	s.mockClaimableBalanceBatchInsertBuilder.On("Len").Return(1).Maybe()
 
 	s.processor = NewClaimableBalancesChangeProcessor(s.mockQ)
 }
@@ -248,4 +253,72 @@ func (s *ClaimableBalancesChangeProcessorTestSuiteLedger) TestRemoveClaimableBal
 		s.ctx,
 		[]string{id},
 	).Return(int64(1), nil).Once()
+}
+
+func (s *ClaimableBalancesChangeProcessorTestSuiteLedger) TestUpdateClaimableBalanceAddSponsor() {
+	balanceID := xdr.ClaimableBalanceId{
+		Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0,
+		V0:   &xdr.Hash{1, 2, 3},
+	}
+	cBalance := xdr.ClaimableBalanceEntry{
+		BalanceId: balanceID,
+		Claimants: []xdr.Claimant{},
+		Asset:     xdr.MustNewCreditAsset("USD", "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
+		Amount:    10,
+	}
+	lastModifiedLedgerSeq := xdr.Uint32(123)
+
+	pre := xdr.LedgerEntry{
+		Data: xdr.LedgerEntryData{
+			Type:             xdr.LedgerEntryTypeClaimableBalance,
+			ClaimableBalance: &cBalance,
+		},
+		LastModifiedLedgerSeq: lastModifiedLedgerSeq - 1,
+		Ext: xdr.LedgerEntryExt{
+			V: 1,
+			V1: &xdr.LedgerEntryExtensionV1{
+				SponsoringId: nil,
+			},
+		},
+	}
+
+	// add sponsor
+	updated := xdr.LedgerEntry{
+		Data: xdr.LedgerEntryData{
+			Type:             xdr.LedgerEntryTypeClaimableBalance,
+			ClaimableBalance: &cBalance,
+		},
+		LastModifiedLedgerSeq: lastModifiedLedgerSeq,
+		Ext: xdr.LedgerEntryExt{
+			V: 1,
+			V1: &xdr.LedgerEntryExtensionV1{
+				SponsoringId: xdr.MustAddressPtr("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
+			},
+		},
+	}
+	s.mockClaimableBalanceBatchInsertBuilder.On("Exec", s.ctx).Return(nil).Once()
+
+	err := s.processor.ProcessChange(s.ctx, ingest.Change{
+		Type: xdr.LedgerEntryTypeClaimableBalance,
+		Pre:  &pre,
+		Post: &updated,
+	})
+	s.Assert().NoError(err)
+
+	id, err := xdr.MarshalHex(balanceID)
+	s.Assert().NoError(err)
+	s.mockQ.On(
+		"UpsertClaimableBalances",
+		s.ctx,
+		[]history.ClaimableBalance{
+			{
+				BalanceID:          id,
+				Claimants:          []history.Claimant{},
+				Asset:              cBalance.Asset,
+				Amount:             cBalance.Amount,
+				LastModifiedLedger: uint32(lastModifiedLedgerSeq),
+				Sponsor:            null.StringFrom("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
+			},
+		},
+	).Return(nil).Once()
 }

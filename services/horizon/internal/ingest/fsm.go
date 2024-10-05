@@ -8,8 +8,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/stellar/go/historyarchive"
 	"github.com/stellar/go/ingest"
 	"github.com/stellar/go/ingest/ledgerbackend"
+	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/support/errors"
 	logpkg "github.com/stellar/go/support/log"
 	"github.com/stellar/go/xdr"
@@ -43,6 +45,32 @@ const (
 	HistoryRange
 	ReingestHistoryRange
 )
+
+// provide a name represention for a state
+func (state State) Name() string {
+	switch state {
+	case Start:
+		return "start"
+	case Stop:
+		return "stop"
+	case Build:
+		return "build"
+	case Resume:
+		return "resume"
+	case WaitForCheckpoint:
+		return "waitforcheckpoint"
+	case StressTest:
+		return "stresstest"
+	case VerifyRange:
+		return "verifyrange"
+	case HistoryRange:
+		return "historyrange"
+	case ReingestHistoryRange:
+		return "reingesthistoryrange"
+	default:
+		return "none"
+	}
+}
 
 type stateMachineNode interface {
 	run(*system) (transition, error)
@@ -326,11 +354,6 @@ func (b buildState) run(s *system) (transition, error) {
 		return nextFailState, nil
 	}
 
-	if err = s.updateCursor(b.checkpointLedger - 1); err != nil {
-		// Don't return updateCursor error.
-		log.WithError(err).Warn("error updating stellar-core cursor")
-	}
-
 	log.Info("Starting ingestion system from empty state...")
 
 	// Clear last_ingested_ledger in key value store
@@ -454,14 +477,6 @@ func (r resumeState) run(s *system) (transition, error) {
 			WithField("lastIngestedLedger", lastIngestedLedger).
 			Info("bumping ingest ledger to next ledger after ingested ledger in db")
 
-		// Update cursor if there's more than one ingesting instance: either
-		// Captive-Core or DB ingestion connected to another Stellar-Core.
-		// remove now?
-		if err = s.updateCursor(lastIngestedLedger); err != nil {
-			// Don't return updateCursor error.
-			log.WithError(err).Warn("error updating stellar-core cursor")
-		}
-
 		// resume immediately so Captive-Core catchup is not slowed down
 		return resumeImmediately(lastIngestedLedger), nil
 	}
@@ -511,7 +526,7 @@ func (r resumeState) run(s *system) (transition, error) {
 	}
 
 	rebuildStart := time.Now()
-	err = s.historyQ.RebuildTradeAggregationBuckets(s.ctx, ingestLedger, ingestLedger, s.config.RoundingSlippageFilter)
+	err = s.RebuildTradeAggregationBuckets(ingestLedger, ingestLedger)
 	if err != nil {
 		return retryResume(r), errors.Wrap(err, "error rebuilding trade aggregations")
 	}
@@ -521,15 +536,6 @@ func (r resumeState) run(s *system) (transition, error) {
 	if err = s.completeIngestion(s.ctx, ingestLedger); err != nil {
 		return retryResume(r), err
 	}
-
-	//TODO remove now? stellar-core-db-url is removed
-	if err = s.updateCursor(ingestLedger); err != nil {
-		// Don't return updateCursor error.
-		log.WithError(err).Warn("error updating stellar-core cursor")
-	}
-
-	duration = time.Since(startTime).Seconds()
-	s.Metrics().LedgerIngestionDuration.Observe(float64(duration))
 
 	// Update stats metrics
 	changeStatsMap := stats.changeStats.Map()
@@ -541,6 +547,22 @@ func (r resumeState) run(s *system) (transition, error) {
 	tradeStatsMap := stats.tradeStats.Map()
 	r.addLedgerStatsMetricFromMap(s, "trades", tradeStatsMap)
 	r.addProcessorDurationsMetricFromMap(s, stats.transactionDurations)
+	r.addLoaderDurationsMetricFromMap(s, stats.loaderDurations)
+	r.addLoaderStatsMetric(s, stats.loaderStats)
+
+	// since a single system instance is shared throughout all states,
+	// this will sweep up increments to history archive counters
+	// done elsewhere such as verifyState invocations since the same system
+	// instance is passed there and the additional usages of archives will just
+	// roll up and be reported here as part of resumeState transition
+	addHistoryArchiveStatsMetrics(s, s.historyAdapter.GetStats())
+
+	s.maybeVerifyState(ingestLedger, ledgerCloseMeta.BucketListHash())
+	s.maybeReapHistory(ingestLedger)
+	s.maybeReapLookupTables(ingestLedger)
+
+	duration = time.Since(startTime).Seconds()
+	s.Metrics().LedgerIngestionDuration.Observe(float64(duration))
 
 	localLog := log.WithFields(logpkg.F{
 		"sequence": ingestLedger,
@@ -559,9 +581,6 @@ func (r resumeState) run(s *system) (transition, error) {
 
 	localLog.Info("Processed ledger")
 
-	s.maybeVerifyState(ingestLedger)
-	s.maybeReapLookupTables(ingestLedger)
-
 	return resumeImmediately(ingestLedger), nil
 }
 
@@ -575,12 +594,64 @@ func (r resumeState) addLedgerStatsMetricFromMap(s *system, prefix string, m map
 
 func (r resumeState) addProcessorDurationsMetricFromMap(s *system, m map[string]time.Duration) {
 	for processorName, value := range m {
-		// * is not accepted in Prometheus labels
-		processorName = strings.Replace(processorName, "*", "", -1)
 		s.Metrics().ProcessorsRunDuration.
 			With(prometheus.Labels{"name": processorName}).Add(value.Seconds())
 		s.Metrics().ProcessorsRunDurationSummary.
 			With(prometheus.Labels{"name": processorName}).Observe(value.Seconds())
+	}
+}
+
+func (r resumeState) addLoaderDurationsMetricFromMap(s *system, m map[string]time.Duration) {
+	for loaderName, value := range m {
+		s.Metrics().LoadersRunDurationSummary.
+			With(prometheus.Labels{"name": loaderName}).Observe(value.Seconds())
+	}
+}
+
+func (r resumeState) addLoaderStatsMetric(s *system, loaderSTats map[string]history.LoaderStats) {
+	for loaderName, stats := range loaderSTats {
+		s.Metrics().LoadersStatsSummary.
+			With(prometheus.Labels{
+				"name": loaderName,
+				"stat": "total_queried",
+			}).
+			Observe(float64(stats.Total))
+		s.Metrics().LoadersStatsSummary.
+			With(prometheus.Labels{
+				"name": loaderName,
+				"stat": "total_inserted",
+			}).
+			Observe(float64(stats.Inserted))
+	}
+}
+
+func addHistoryArchiveStatsMetrics(s *system, stats []historyarchive.ArchiveStats) {
+	for _, historyServerStat := range stats {
+		s.Metrics().HistoryArchiveStatsCounter.
+			With(prometheus.Labels{
+				"source": historyServerStat.GetBackendName(),
+				"type":   "file_downloads"}).
+			Add(float64(historyServerStat.GetDownloads()))
+		s.Metrics().HistoryArchiveStatsCounter.
+			With(prometheus.Labels{
+				"source": historyServerStat.GetBackendName(),
+				"type":   "file_uploads"}).
+			Add(float64(historyServerStat.GetUploads()))
+		s.Metrics().HistoryArchiveStatsCounter.
+			With(prometheus.Labels{
+				"source": historyServerStat.GetBackendName(),
+				"type":   "requests"}).
+			Add(float64(historyServerStat.GetRequests()))
+		s.Metrics().HistoryArchiveStatsCounter.
+			With(prometheus.Labels{
+				"source": historyServerStat.GetBackendName(),
+				"type":   "cache_hits"}).
+			Add(float64(historyServerStat.GetCacheHits()))
+		s.Metrics().HistoryArchiveStatsCounter.
+			With(prometheus.Labels{
+				"source": historyServerStat.GetBackendName(),
+				"type":   "cache_bandwidth"}).
+			Add(float64(historyServerStat.GetCacheBandwidth()))
 	}
 }
 
@@ -701,7 +772,6 @@ func (v verifyRangeState) run(s *system) (transition, error) {
 			return stop(), err
 		}
 
-		var ledgerCloseMeta xdr.LedgerCloseMeta
 		ledgerCloseMeta, err = s.ledgerBackend.GetLedger(s.ctx, sequence)
 		if err != nil {
 			return stop(), errors.Wrap(err, "error getting ledger")
@@ -732,13 +802,17 @@ func (v verifyRangeState) run(s *system) (transition, error) {
 			Info("Processed ledger")
 	}
 
-	err = s.historyQ.RebuildTradeAggregationBuckets(s.ctx, v.fromLedger, v.toLedger, s.config.RoundingSlippageFilter)
+	err = s.RebuildTradeAggregationBuckets(v.fromLedger, v.toLedger)
 	if err != nil {
 		return stop(), errors.Wrap(err, "error rebuilding trade aggregations")
 	}
 
 	if v.verifyState {
-		err = s.verifyState(false)
+		err = s.verifyState(
+			false,
+			ledgerCloseMeta.LedgerSequence(),
+			ledgerCloseMeta.BucketListHash(),
+		)
 	}
 
 	return stop(), err

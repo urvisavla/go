@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/guregu/null"
+
 	"github.com/stellar/go/services/horizon/internal/db2"
 	"github.com/stellar/go/services/horizon/internal/test"
 	"github.com/stellar/go/xdr"
@@ -203,7 +204,7 @@ func TestFindClaimableBalancesByDestination(t *testing.T) {
 	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
 
 	// this validates the cb query with claimant and cb.id/ledger cursor parameters
-	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 150, cbs[0].BalanceID), false, "", 10)
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 150, cbs[0].BalanceID), false, "asc", 10)
 	query.Claimant = xdr.MustAddressPtr(dest1)
 	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
 	tt.Assert.NoError(err)
@@ -212,11 +213,193 @@ func TestFindClaimableBalancesByDestination(t *testing.T) {
 
 	// this validates the cb query with no claimant parameter,
 	// should still produce working sql, as it triggers different LIMIT position in sql.
-	query.PageQuery = db2.MustPageQuery("", false, "", 1)
+	query.PageQuery = db2.MustPageQuery("", false, "desc", 1)
 	query.Claimant = nil
 	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
 	tt.Assert.NoError(err)
 	tt.Assert.Len(cbs, 1)
+}
+
+func TestFindClaimableBalancesByCursor(t *testing.T) {
+	tt := test.Start(t)
+	defer tt.Finish()
+	test.ResetHorizonDB(t, tt.HorizonDB)
+	q := &Q{tt.HorizonSession()}
+
+	tt.Assert.NoError(q.BeginTx(tt.Ctx, &sql.TxOptions{}))
+	defer func() {
+		_ = q.Rollback()
+	}()
+
+	balanceInsertBuilder := q.NewClaimableBalanceBatchInsertBuilder()
+	claimantsInsertBuilder := q.NewClaimableBalanceClaimantBatchInsertBuilder()
+
+	dest1 := "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"
+	dest2 := "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
+
+	sponsor1 := "GA25GQLHJU3LPEJXEIAXK23AWEA5GWDUGRSHTQHDFT6HXHVMRULSQJUJ"
+	sponsor2 := "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
+
+	asset := xdr.MustNewCreditAsset("USD", dest1)
+	balanceID := xdr.ClaimableBalanceId{
+		Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0,
+		V0:   &xdr.Hash{1, 2, 3},
+	}
+	id, err := xdr.MarshalHex(balanceID)
+	tt.Assert.NoError(err)
+	cBalance := ClaimableBalance{
+		BalanceID: id,
+		Claimants: []Claimant{
+			{
+				Destination: dest1,
+				Predicate: xdr.ClaimPredicate{
+					Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional,
+				},
+			},
+		},
+		Asset:              asset,
+		LastModifiedLedger: 123,
+		Amount:             10,
+		Sponsor:            null.StringFrom(sponsor1),
+	}
+
+	tt.Assert.NoError(balanceInsertBuilder.Add(cBalance))
+	tt.Assert.NoError(insertClaimants(claimantsInsertBuilder, cBalance))
+
+	balanceID = xdr.ClaimableBalanceId{
+		Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0,
+		V0:   &xdr.Hash{3, 2, 1},
+	}
+	id, err = xdr.MarshalHex(balanceID)
+	tt.Assert.NoError(err)
+	cBalance = ClaimableBalance{
+		BalanceID: id,
+		Claimants: []Claimant{
+			{
+				Destination: dest1,
+				Predicate: xdr.ClaimPredicate{
+					Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional,
+				},
+			},
+			{
+				Destination: dest2,
+				Predicate: xdr.ClaimPredicate{
+					Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional,
+				},
+			},
+		},
+		Asset:              asset,
+		LastModifiedLedger: 300,
+		Amount:             10,
+		Sponsor:            null.StringFrom(sponsor2),
+	}
+
+	tt.Assert.NoError(balanceInsertBuilder.Add(cBalance))
+	tt.Assert.NoError(insertClaimants(claimantsInsertBuilder, cBalance))
+
+	tt.Assert.NoError(claimantsInsertBuilder.Exec(tt.Ctx))
+	tt.Assert.NoError(balanceInsertBuilder.Exec(tt.Ctx))
+
+	query := ClaimableBalancesQuery{
+		PageQuery: db2.MustPageQuery("", false, "", 10),
+	}
+
+	cbs, err := q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 2)
+
+	order := "" // default is "asc"
+	// this validates the cb query with claimant and cb.id/ledger cursor parameters
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 150, cbs[0].BalanceID), false, order, 10)
+	query.Claimant = xdr.MustAddressPtr(dest1)
+	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
+
+	// this validates the cb query with claimant, asset, sponsor and cb.id/ledger cursor parameters
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 150, cbs[0].BalanceID), false, order, 10)
+	query.Claimant = xdr.MustAddressPtr(dest1)
+	query.Asset = &asset
+	query.Sponsor = xdr.MustAddressPtr(sponsor2)
+
+	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
+
+	// this validates the cb query with no claimant, asset, sponsor and cb.id/ledger cursor parameters
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 150, cbs[0].BalanceID), false, order, 10)
+	query.Claimant = nil
+	query.Asset = &asset
+	query.Sponsor = xdr.MustAddressPtr(sponsor2)
+
+	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
+
+	order = "desc"
+	// claimant and cb.id/ledger cursor parameters
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 301, cbs[0].BalanceID), false, order, 10)
+	query.Claimant = xdr.MustAddressPtr(dest1)
+	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
+
+	// claimant, asset, sponsor and cb.id/ledger cursor parameters
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 301, cbs[0].BalanceID), false, order, 10)
+	query.Claimant = xdr.MustAddressPtr(dest1)
+	query.Asset = &asset
+	query.Sponsor = xdr.MustAddressPtr(sponsor2)
+
+	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
+
+	// no claimant, asset, sponsor and cb.id/ledger cursor parameters
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 301, cbs[0].BalanceID), false, order, 10)
+	query.Claimant = nil
+	query.Asset = &asset
+	query.Sponsor = xdr.MustAddressPtr(sponsor2)
+
+	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
+
+	order = "asc"
+	// claimant and cb.id/ledger cursor parameters
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 150, cbs[0].BalanceID), false, order, 10)
+	query.Claimant = xdr.MustAddressPtr(dest1)
+	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
+
+	// claimant, asset, sponsor and cb.id/ledger cursor parameters
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 150, cbs[0].BalanceID), false, order, 10)
+	query.Claimant = xdr.MustAddressPtr(dest1)
+	query.Asset = &asset
+	query.Sponsor = xdr.MustAddressPtr(sponsor2)
+
+	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
+
+	// no claimant, asset, sponsor and cb.id/ledger cursor parameters
+	query.PageQuery = db2.MustPageQuery(fmt.Sprintf("%v-%s", 150, cbs[0].BalanceID), false, order, 10)
+	query.Claimant = nil
+	query.Asset = &asset
+	query.Sponsor = xdr.MustAddressPtr(sponsor2)
+
+	cbs, err = q.GetClaimableBalances(tt.Ctx, query)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal(dest2, cbs[0].Claimants[1].Destination)
 }
 
 func insertClaimants(claimantsInsertBuilder ClaimableBalanceClaimantBatchInsertBuilder, cBalance ClaimableBalance) error {
@@ -403,6 +586,85 @@ func TestFindClaimableBalancesByDestinationWithLimit(t *testing.T) {
 	validateClaimableBalanceQuery(tt, q, query, []claimableBalanceQueryResult{
 		{Claimants: []string{dest2}, Asset: asset2.String(), Sponsor: sponsor2},
 	})
+}
+
+func TestUpdateClaimableBalance(t *testing.T) {
+	tt := test.Start(t)
+	defer tt.Finish()
+	test.ResetHorizonDB(t, tt.HorizonDB)
+	q := &Q{tt.HorizonSession()}
+
+	accountID := "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"
+	lastModifiedLedgerSeq := xdr.Uint32(123)
+	asset := xdr.MustNewCreditAsset("USD", accountID)
+	balanceID := xdr.ClaimableBalanceId{
+		Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0,
+		V0:   &xdr.Hash{1, 2, 3},
+	}
+	id, err := xdr.MarshalHex(balanceID)
+	tt.Assert.NoError(err)
+	cBalance := ClaimableBalance{
+		BalanceID: id,
+		Claimants: []Claimant{
+			{
+				Destination: accountID,
+				Predicate: xdr.ClaimPredicate{
+					Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional,
+				},
+			},
+		},
+		Asset:              asset,
+		LastModifiedLedger: 123,
+		Amount:             10,
+	}
+
+	err = q.UpsertClaimableBalances(tt.Ctx, []ClaimableBalance{cBalance})
+	tt.Assert.NoError(err)
+
+	cBalancesClaimants, err := q.GetClaimantsByClaimableBalances(tt.Ctx, []string{cBalance.BalanceID})
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cBalancesClaimants[cBalance.BalanceID], 1)
+	tt.Assert.Equal(ClaimableBalanceClaimant{
+		BalanceID:          cBalance.BalanceID,
+		Destination:        accountID,
+		LastModifiedLedger: cBalance.LastModifiedLedger,
+	}, cBalancesClaimants[cBalance.BalanceID][0])
+
+	// add sponsor
+	cBalance2 := ClaimableBalance{
+		BalanceID: id,
+		Claimants: []Claimant{
+			{
+				Destination: accountID,
+				Predicate: xdr.ClaimPredicate{
+					Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional,
+				},
+			},
+		},
+		Asset:              asset,
+		LastModifiedLedger: 123 + 1,
+		Amount:             10,
+		Sponsor:            null.StringFrom("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML"),
+	}
+
+	err = q.UpsertClaimableBalances(tt.Ctx, []ClaimableBalance{cBalance2})
+	tt.Assert.NoError(err)
+
+	cbs := []ClaimableBalance{}
+	err = q.Select(tt.Ctx, &cbs, selectClaimableBalances)
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cbs, 1)
+	tt.Assert.Equal("GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML", cbs[0].Sponsor.String)
+	tt.Assert.Equal(uint32(lastModifiedLedgerSeq+1), cbs[0].LastModifiedLedger)
+
+	cBalancesClaimants, err = q.GetClaimantsByClaimableBalances(tt.Ctx, []string{cBalance2.BalanceID})
+	tt.Assert.NoError(err)
+	tt.Assert.Len(cBalancesClaimants[cBalance2.BalanceID], 1)
+	tt.Assert.Equal(ClaimableBalanceClaimant{
+		BalanceID:          cBalance2.BalanceID,
+		Destination:        accountID,
+		LastModifiedLedger: cBalance2.LastModifiedLedger,
+	}, cBalancesClaimants[cBalance2.BalanceID][0])
 }
 
 func TestFindClaimableBalance(t *testing.T) {

@@ -60,7 +60,6 @@ func TestTxSubLimitsBodySize(t *testing.T) {
 	}
 
 	itest := integration.NewTest(t, integration.Config{
-		ProtocolVersion:  20,
 		EnableSorobanRPC: true,
 		HorizonEnvironment: map[string]string{
 			"MAX_HTTP_REQUEST_SIZE": "1800",
@@ -75,7 +74,7 @@ func TestTxSubLimitsBodySize(t *testing.T) {
 
 	installContractOp := assembleInstallContractCodeOp(t, itest.Master().Address(), "soroban_sac_test.wasm")
 	preFlightOp, minFee := itest.PreflightHostFunctions(&sourceAccount, *installContractOp)
-	_, err = itest.SubmitOperationsWithFee(&sourceAccount, itest.Master(), minFee, &preFlightOp)
+	_, err = itest.SubmitOperationsWithFee(&sourceAccount, itest.Master(), minFee+txnbuild.MinBaseFee, &preFlightOp)
 	assert.EqualError(
 		t, err,
 		"horizon error: \"Transaction Malformed\" - check horizon.Error.Problem for more information",
@@ -88,7 +87,7 @@ func TestTxSubLimitsBodySize(t *testing.T) {
 
 	installContractOp = assembleInstallContractCodeOp(t, itest.Master().Address(), "soroban_add_u64.wasm")
 	preFlightOp, minFee = itest.PreflightHostFunctions(&sourceAccount, *installContractOp)
-	tx, err := itest.SubmitOperationsWithFee(&sourceAccount, itest.Master(), minFee, &preFlightOp)
+	tx, err := itest.SubmitOperationsWithFee(&sourceAccount, itest.Master(), minFee+txnbuild.MinBaseFee, &preFlightOp)
 	require.NoError(t, err)
 	require.True(t, tx.Successful)
 }

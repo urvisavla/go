@@ -2,11 +2,10 @@ package ledgerbackend
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/stellar/go/support/errors"
@@ -14,6 +13,16 @@ import (
 	"github.com/stellar/go/xdr"
 
 	"github.com/pelletier/go-toml"
+)
+
+var (
+	//go:embed configs/captive-core-pubnet.cfg
+	PubnetDefaultConfig []byte
+
+	//go:embed configs/captive-core-testnet.cfg
+	TestnetDefaultConfig []byte
+
+	defaultBucketListDBPageSize uint = 12
 )
 
 const (
@@ -88,12 +97,15 @@ type captiveCoreTomlValues struct {
 	Validators                            []Validator          `toml:"VALIDATORS,omitempty"`
 	HistoryEntries                        map[string]History   `toml:"-"`
 	QuorumSetEntries                      map[string]QuorumSet `toml:"-"`
-	UseBucketListDB                       bool                 `toml:"EXPERIMENTAL_BUCKETLIST_DB,omitempty"`
-	BucketListDBPageSizeExp               *uint                `toml:"EXPERIMENTAL_BUCKETLIST_DB_INDEX_PAGE_SIZE_EXPONENT,omitempty"`
-	BucketListDBCutoff                    *uint                `toml:"EXPERIMENTAL_BUCKETLIST_DB_INDEX_CUTOFF,omitempty"`
+	BucketListDBPageSizeExp               *uint                `toml:"BUCKETLIST_DB_INDEX_PAGE_SIZE_EXPONENT,omitempty"`
+	BucketListDBCutoff                    *uint                `toml:"BUCKETLIST_DB_INDEX_CUTOFF,omitempty"`
+	DeprecatedSqlLedgerState              *bool                `toml:"DEPRECATED_SQL_LEDGER_STATE,omitempty"`
 	EnableSorobanDiagnosticEvents         *bool                `toml:"ENABLE_SOROBAN_DIAGNOSTIC_EVENTS,omitempty"`
 	TestingMinimumPersistentEntryLifetime *uint                `toml:"TESTING_MINIMUM_PERSISTENT_ENTRY_LIFETIME,omitempty"`
 	TestingSorobanHighLimitOverride       *bool                `toml:"TESTING_SOROBAN_HIGH_LIMIT_OVERRIDE,omitempty"`
+	EnableDiagnosticsForTxSubmission      *bool                `toml:"ENABLE_DIAGNOSTICS_FOR_TX_SUBMISSION,omitempty"`
+	EnableEmitSorobanTransactionMetaExtV1 *bool                `toml:"EMIT_SOROBAN_TRANSACTION_META_EXT_V1,omitempty"`
+	EnableEmitLedgerCloseMetaExtV1        *bool                `toml:"EMIT_LEDGER_CLOSE_META_EXT_V1,omitempty"`
 }
 
 // QuorumSetIsConfigured returns true if there is a quorum set defined in the configuration.
@@ -330,8 +342,10 @@ type CaptiveCoreTomlParams struct {
 	UseDB bool
 	// the path to the core binary, used to introspect core at runtime, determine some toml capabilities
 	CoreBinaryPath string
-	// Enforce EnableSorobanDiagnosticEvents when not disabled explicitly
+	// Enforce EnableSorobanDiagnosticEvents and EnableDiagnosticsForTxSubmission when not disabled explicitly
 	EnforceSorobanDiagnosticEvents bool
+	// Enfore EnableSorobanTransactionMetaExtV1 when not disabled explicitly
+	EnforceSorobanTransactionMetaExtV1 bool
 }
 
 // NewCaptiveCoreTomlFromFile constructs a new CaptiveCoreToml instance by merging configuration
@@ -429,106 +443,20 @@ func (c *CaptiveCoreToml) CatchupToml() (*CaptiveCoreToml, error) {
 	return offline, nil
 }
 
-// coreVersion helper struct identify a core version and provides the
-// utilities to compare the version ( i.e. minor + major pair ) to a predefined
-// version.
-type coreVersion struct {
-	major                 int
-	minor                 int
-	ledgerProtocolVersion int
-}
-
-// IsEqualOrAbove compares the core version to a version specific. If unable
-// to make the decision, the result is always "false", leaning toward the
-// common denominator.
-func (c *coreVersion) IsEqualOrAbove(major, minor int) bool {
-	if c.major == 0 && c.minor == 0 {
-		return false
-	}
-	return (c.major == major && c.minor >= minor) || (c.major > major)
-}
-
-// IsEqualOrAbove compares the core version to a version specific. If unable
-// to make the decision, the result is always "false", leaning toward the
-// common denominator.
-func (c *coreVersion) IsProtocolVersionEqualOrAbove(protocolVer int) bool {
-	if c.ledgerProtocolVersion == 0 {
-		return false
-	}
-	return c.ledgerProtocolVersion >= protocolVer
-}
-
-func (c *CaptiveCoreToml) checkCoreVersion(coreBinaryPath string) coreVersion {
-	if coreBinaryPath == "" {
-		return coreVersion{}
-	}
-
-	versionBytes, err := exec.Command(coreBinaryPath, "version").Output()
-	if err != nil {
-		return coreVersion{}
-	}
-
-	// starting soroban, we want to use only the first row for the version.
-	versionRows := strings.Split(string(versionBytes), "\n")
-	versionRaw := versionRows[0]
-
-	var version [2]int
-
-	re := regexp.MustCompile(`\D*(\d*)\.(\d*).*`)
-	versionStr := re.FindStringSubmatch(versionRaw)
-	if err == nil && len(versionStr) == 3 {
-		for i := 1; i < len(versionStr); i++ {
-			val, err := strconv.Atoi((versionStr[i]))
-			if err != nil {
-				break
-			}
-			version[i-1] = val
-		}
-	}
-
-	re = regexp.MustCompile(`^\s*ledger protocol version: (\d*)`)
-	var ledgerProtocol int
-	var ledgerProtocolStrings []string
-	for _, line := range versionRows {
-		ledgerProtocolStrings = re.FindStringSubmatch(line)
-		if len(ledgerProtocolStrings) > 0 {
-			break
-		}
-	}
-	if len(ledgerProtocolStrings) == 2 {
-		if val, err := strconv.Atoi(ledgerProtocolStrings[1]); err == nil {
-			ledgerProtocol = val
-		}
-	}
-
-	return coreVersion{
-		major:                 version[0],
-		minor:                 version[1],
-		ledgerProtocolVersion: ledgerProtocol,
-	}
-}
-
-const MinimalBucketListDBCoreSupportVersionMajor = 19
-const MinimalBucketListDBCoreSupportVersionMinor = 6
-const MinimalSorobanProtocolSupport = 20
-
 func (c *CaptiveCoreToml) setDefaults(params CaptiveCoreTomlParams) {
 	if params.UseDB && !c.tree.Has("DATABASE") {
 		c.Database = "sqlite3://stellar.db"
 	}
 
-	coreVersion := c.checkCoreVersion(params.CoreBinaryPath)
-	if def := c.tree.Has("EXPERIMENTAL_BUCKETLIST_DB"); !def && params.UseDB {
-		// Supports version 19.6 and above
-		if coreVersion.IsEqualOrAbove(MinimalBucketListDBCoreSupportVersionMajor, MinimalBucketListDBCoreSupportVersionMinor) {
-			c.UseBucketListDB = true
+	deprecatedSqlLedgerState := false
+	if !params.UseDB {
+		deprecatedSqlLedgerState = true
+	} else {
+		if !c.tree.Has("BUCKETLIST_DB_INDEX_PAGE_SIZE_EXPONENT") {
+			c.BucketListDBPageSizeExp = &defaultBucketListDBPageSize
 		}
 	}
-
-	if c.UseBucketListDB && !c.tree.Has("EXPERIMENTAL_BUCKETLIST_DB_INDEX_PAGE_SIZE_EXPONENT") {
-		n := uint(12)
-		c.BucketListDBPageSizeExp = &n // Set default page size to 4KB
-	}
+	c.DeprecatedSqlLedgerState = &deprecatedSqlLedgerState
 
 	if !c.tree.Has("NETWORK_PASSPHRASE") {
 		c.NetworkPassphrase = params.NetworkPassphrase
@@ -558,23 +486,30 @@ func (c *CaptiveCoreToml) setDefaults(params CaptiveCoreTomlParams) {
 		for i, val := range params.HistoryArchiveURLs {
 			name := fmt.Sprintf("HISTORY.h%d", i)
 			c.HistoryEntries[c.tablePlaceholders.newPlaceholder(name)] = History{
-				Get: fmt.Sprintf("curl -sf %s/{0} -o {1}", val),
+				Get: fmt.Sprintf("curl -sf %s/{0} -o {1}", strings.TrimSuffix(val, "/")),
 			}
 		}
 	}
 
-	// starting version 20, we have dignostics events.
-	if params.EnforceSorobanDiagnosticEvents && coreVersion.IsProtocolVersionEqualOrAbove(MinimalSorobanProtocolSupport) {
-		if c.EnableSorobanDiagnosticEvents == nil {
-			// We are generating the file from scratch or the user didn't explicitly oppose to diagnostic events in the config file.
-			// Enforce it.
-			t := true
-			c.EnableSorobanDiagnosticEvents = &t
-		}
-		if !*c.EnableSorobanDiagnosticEvents {
-			// The user opposed to diagnostic events in the config file, but there is no need to pass on the option
-			c.EnableSorobanDiagnosticEvents = nil
-		}
+	if params.EnforceSorobanDiagnosticEvents {
+		enforceOption(&c.EnableSorobanDiagnosticEvents)
+		enforceOption(&c.EnableDiagnosticsForTxSubmission)
+	}
+	if params.EnforceSorobanTransactionMetaExtV1 {
+		enforceOption(&c.EnableEmitSorobanTransactionMetaExtV1)
+	}
+}
+
+func enforceOption(opt **bool) {
+	if *opt == nil {
+		// We are generating the file from scratch or the user didn't explicitly oppose the option.
+		// Enforce it.
+		t := true
+		*opt = &t
+	}
+	if !**opt {
+		// The user opposed the option, but there is no need to pass it on
+		*opt = nil
 	}
 }
 
@@ -611,10 +546,14 @@ func (c *CaptiveCoreToml) validate(params CaptiveCoreTomlParams) error {
 		)
 	}
 
-	if def := c.tree.Has("EXPERIMENTAL_BUCKETLIST_DB"); def && !params.UseDB {
-		return fmt.Errorf(
-			"BucketListDB enabled in captive core config file, requires Horizon flag --captive-core-use-db",
-		)
+	if c.tree.Has("DEPRECATED_SQL_LEDGER_STATE") {
+		if params.UseDB && *c.DeprecatedSqlLedgerState {
+			return fmt.Errorf("CAPTIVE_CORE_USE_DB parameter is set to true, indicating stellar-core on-disk mode," +
+				" in which DEPRECATED_SQL_LEDGER_STATE must be set to false")
+		} else if !params.UseDB && !*c.DeprecatedSqlLedgerState {
+			return fmt.Errorf("CAPTIVE_CORE_USE_DB parameter is set to false, indicating stellar-core in-memory mode," +
+				" in which DEPRECATED_SQL_LEDGER_STATE must be set to true")
+		}
 	}
 
 	homeDomainSet := map[string]HomeDomain{}

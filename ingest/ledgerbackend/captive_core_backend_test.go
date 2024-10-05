@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -40,14 +44,14 @@ func (m *stellarCoreRunnerMock) runFrom(from uint32, hash string) error {
 	return a.Error(0)
 }
 
-func (m *stellarCoreRunnerMock) getMetaPipe() <-chan metaResult {
+func (m *stellarCoreRunnerMock) getMetaPipe() (<-chan metaResult, bool) {
 	a := m.Called()
-	return a.Get(0).(<-chan metaResult)
+	return a.Get(0).(<-chan metaResult), a.Bool(1)
 }
 
-func (m *stellarCoreRunnerMock) getProcessExitError() (bool, error) {
+func (m *stellarCoreRunnerMock) getProcessExitError() (error, bool) {
 	a := m.Called()
-	return a.Bool(0), a.Error(1)
+	return a.Error(0), a.Bool(1)
 }
 
 func (m *stellarCoreRunnerMock) close() error {
@@ -138,22 +142,62 @@ func TestCaptiveNew(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(storagePath)
 
+	var userAgent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		userAgent = r.Header["User-Agent"][0]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
 	executablePath := "/etc/stellar-core"
 	networkPassphrase := network.PublicNetworkPassphrase
-	historyURLs := []string{"http://history.stellar.org/prd/core-live/core_live_001"}
+	historyURLs := []string{server.URL}
 
 	captiveStellarCore, err := NewCaptive(
 		CaptiveCoreConfig{
-			BinaryPath:         executablePath,
-			NetworkPassphrase:  networkPassphrase,
-			HistoryArchiveURLs: historyURLs,
-			StoragePath:        storagePath,
+			BinaryPath:            executablePath,
+			NetworkPassphrase:     networkPassphrase,
+			HistoryArchiveURLs:    historyURLs,
+			StoragePath:           storagePath,
+			UserAgent:             "uatest",
+			CoreProtocolVersionFn: func(string) (uint, error) { return 21, nil },
 		},
 	)
 
 	assert.NoError(t, err)
 	assert.Equal(t, uint32(0), captiveStellarCore.nextLedger)
 	assert.NotNil(t, captiveStellarCore.archive)
+	_, err = captiveStellarCore.archive.BucketExists(historyarchive.EmptyXdrArrayHash())
+	assert.NoError(t, err)
+	assert.Equal(t, "uatest", userAgent)
+}
+
+func TestCaptiveNewUnsupportedProtocolVersion(t *testing.T) {
+	storagePath, err := os.MkdirTemp("", "captive-core-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(storagePath)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	executablePath := "/etc/stellar-core"
+	networkPassphrase := network.PublicNetworkPassphrase
+	historyURLs := []string{server.URL}
+
+	_, err = NewCaptive(
+		CaptiveCoreConfig{
+			BinaryPath:            executablePath,
+			NetworkPassphrase:     networkPassphrase,
+			HistoryArchiveURLs:    historyURLs,
+			StoragePath:           storagePath,
+			UserAgent:             "uatest",
+			CoreProtocolVersionFn: func(string) (uint, error) { return 20, nil },
+		},
+	)
+
+	assert.EqualError(t, err, "stellar-core version not supported. Installed stellar-core version is at protocol 20, but minimum required version is 21. Please upgrade stellar-core to a version that supports protocol version 21 or higher")
 }
 
 func TestCaptivePrepareRange(t *testing.T) {
@@ -171,7 +215,7 @@ func TestCaptivePrepareRange(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(100), uint32(200)).Return(nil).Once()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 
 	mockArchive := &historyarchive.MockArchive{}
@@ -182,7 +226,7 @@ func TestCaptivePrepareRange(t *testing.T) {
 		}, nil)
 
 	cancelCalled := false
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -192,6 +236,7 @@ func TestCaptivePrepareRange(t *testing.T) {
 			cancelCalled = true
 		}),
 	}
+	captiveBackend.registerMetrics(prometheus.NewRegistry(), "test")
 
 	err := captiveBackend.PrepareRange(ctx, BoundedRange(100, 200))
 	assert.NoError(t, err)
@@ -201,6 +246,8 @@ func TestCaptivePrepareRange(t *testing.T) {
 	assert.True(t, cancelCalled)
 	mockRunner.AssertExpectations(t)
 	mockArchive.AssertExpectations(t)
+
+	assert.Equal(t, uint64(0), getStartDurationMetric(captiveBackend).GetSampleCount())
 }
 
 func TestCaptivePrepareRangeCrash(t *testing.T) {
@@ -209,8 +256,8 @@ func TestCaptivePrepareRangeCrash(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(100), uint32(200)).Return(nil).Once()
-	mockRunner.On("getProcessExitError").Return(true, errors.New("exit code -1"))
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getProcessExitError").Return(errors.New("exit code -1"), true)
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("close").Return(nil).Once()
 	mockRunner.On("context").Return(ctx)
 
@@ -221,7 +268,7 @@ func TestCaptivePrepareRangeCrash(t *testing.T) {
 			CurrentLedger: uint32(200),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -250,7 +297,7 @@ func TestCaptivePrepareRangeTerminated(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(100), uint32(200)).Return(nil).Once()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 
 	mockArchive := &historyarchive.MockArchive{}
@@ -260,7 +307,7 @@ func TestCaptivePrepareRangeTerminated(t *testing.T) {
 			CurrentLedger: uint32(200),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -286,11 +333,9 @@ func TestCaptivePrepareRangeCloseNotFullyTerminated(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(100), uint32(200)).Return(nil).Twice()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 	mockRunner.On("close").Return(nil)
-	mockRunner.On("getProcessExitError").Return(true, nil)
-	mockRunner.On("getProcessExitError").Return(false, nil)
 
 	mockArchive := &historyarchive.MockArchive{}
 	mockArchive.
@@ -299,7 +344,7 @@ func TestCaptivePrepareRangeCloseNotFullyTerminated(t *testing.T) {
 			CurrentLedger: uint32(200),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -324,10 +369,10 @@ func TestCaptivePrepareRange_ErrClosingSession(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("close").Return(fmt.Errorf("transient error"))
-	mockRunner.On("getProcessExitError").Return(false, nil)
+	mockRunner.On("getProcessExitError").Return(nil, false)
 	mockRunner.On("context").Return(ctx)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		nextLedger:        300,
 		stellarCoreRunner: mockRunner,
 	}
@@ -348,7 +393,7 @@ func TestCaptivePrepareRange_ErrGettingRootHAS(t *testing.T) {
 		On("GetRootHAS").
 		Return(historyarchive.HistoryArchiveState{}, errors.New("transient error"))
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 	}
 
@@ -372,7 +417,7 @@ func TestCaptivePrepareRange_FromIsAheadOfRootHAS(t *testing.T) {
 			CurrentLedger: uint32(64),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -400,7 +445,7 @@ func TestCaptivePrepareRange_FromIsAheadOfRootHAS(t *testing.T) {
 	}
 
 	mockRunner.On("runFrom", uint32(63), "0000000000000000000000000000000000000000000000000000000000000000").Return(nil).Once()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 
 	assert.NoError(t, captiveBackend.PrepareRange(ctx, UnboundedRange(100)))
@@ -420,7 +465,7 @@ func TestCaptivePrepareRangeWithDB_FromIsAheadOfRootHAS(t *testing.T) {
 			CurrentLedger: uint32(64),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		useDB:   true,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
@@ -441,7 +486,7 @@ func TestCaptivePrepareRangeWithDB_FromIsAheadOfRootHAS(t *testing.T) {
 		LedgerCloseMeta: &meta,
 	}
 	mockRunner.On("runFrom", uint32(99), "").Return(nil).Once()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 
 	assert.NoError(t, captiveBackend.PrepareRange(ctx, UnboundedRange(100)))
@@ -459,7 +504,7 @@ func TestCaptivePrepareRange_ToIsAheadOfRootHAS(t *testing.T) {
 			CurrentLedger: uint32(192),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -477,7 +522,6 @@ func TestCaptivePrepareRange_ToIsAheadOfRootHAS(t *testing.T) {
 func TestCaptivePrepareRange_ErrCatchup(t *testing.T) {
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(100), uint32(192)).Return(errors.New("transient error")).Once()
-	mockRunner.On("close").Return(nil).Once()
 
 	mockArchive := &historyarchive.MockArchive{}
 	mockArchive.
@@ -488,7 +532,7 @@ func TestCaptivePrepareRange_ErrCatchup(t *testing.T) {
 
 	ctx := context.Background()
 	cancelCalled := false
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -512,7 +556,6 @@ func TestCaptivePrepareRange_ErrCatchup(t *testing.T) {
 func TestCaptivePrepareRangeUnboundedRange_ErrRunFrom(t *testing.T) {
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("runFrom", uint32(126), "0000000000000000000000000000000000000000000000000000000000000000").Return(errors.New("transient error")).Once()
-	mockRunner.On("close").Return(nil).Once()
 
 	mockArchive := &historyarchive.MockArchive{}
 	mockArchive.
@@ -527,7 +570,7 @@ func TestCaptivePrepareRangeUnboundedRange_ErrRunFrom(t *testing.T) {
 
 	ctx := context.Background()
 	cancelCalled := false
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -537,9 +580,12 @@ func TestCaptivePrepareRangeUnboundedRange_ErrRunFrom(t *testing.T) {
 			cancelCalled = true
 		}),
 	}
+	captiveBackend.registerMetrics(prometheus.NewRegistry(), "test")
 
 	err := captiveBackend.PrepareRange(ctx, UnboundedRange(128))
 	assert.EqualError(t, err, "error starting prepare range: opening subprocess: error running stellar-core: transient error")
+
+	assert.Equal(t, uint64(0), getStartDurationMetric(captiveBackend).GetSampleCount())
 
 	// make sure we can Close without errors
 	assert.NoError(t, captiveBackend.Close())
@@ -547,6 +593,15 @@ func TestCaptivePrepareRangeUnboundedRange_ErrRunFrom(t *testing.T) {
 
 	mockArchive.AssertExpectations(t)
 	mockRunner.AssertExpectations(t)
+}
+
+func getStartDurationMetric(captiveCore *CaptiveStellarCore) *dto.Summary {
+	value := &dto.Metric{}
+	err := captiveCore.captiveCoreStartDuration.Write(value)
+	if err != nil {
+		panic(err)
+	}
+	return value.GetSummary()
 }
 
 func TestCaptivePrepareRangeUnboundedRange_ReuseSession(t *testing.T) {
@@ -564,9 +619,9 @@ func TestCaptivePrepareRangeUnboundedRange_ReuseSession(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("runFrom", uint32(64), "0000000000000000000000000000000000000000000000000000000000000000").Return(nil).Once()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
-	mockRunner.On("getProcessExitError").Return(false, nil)
+	mockRunner.On("getProcessExitError").Return(nil, false)
 
 	mockArchive := &historyarchive.MockArchive{}
 	mockArchive.
@@ -579,20 +634,26 @@ func TestCaptivePrepareRangeUnboundedRange_ReuseSession(t *testing.T) {
 		On("GetLedgerHeader", uint32(65)).
 		Return(xdr.LedgerHeaderHistoryEntry{}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
 		},
 		checkpointManager: historyarchive.NewCheckpointManager(64),
 	}
+	captiveBackend.registerMetrics(prometheus.NewRegistry(), "test")
 
 	err := captiveBackend.PrepareRange(ctx, UnboundedRange(65))
 	assert.NoError(t, err)
 
+	assert.Equal(t, uint64(1), getStartDurationMetric(captiveBackend).GetSampleCount())
+	assert.Greater(t, getStartDurationMetric(captiveBackend).GetSampleSum(), float64(0))
+
 	captiveBackend.nextLedger = 64
 	err = captiveBackend.PrepareRange(ctx, UnboundedRange(65))
 	assert.NoError(t, err)
+
+	assert.Equal(t, uint64(1), getStartDurationMetric(captiveBackend).GetSampleCount())
 
 	mockArchive.AssertExpectations(t)
 	mockRunner.AssertExpectations(t)
@@ -613,7 +674,7 @@ func TestGetLatestLedgerSequence(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("runFrom", uint32(63), "0000000000000000000000000000000000000000000000000000000000000000").Return(nil).Once()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 
 	mockArchive := &historyarchive.MockArchive{}
@@ -627,7 +688,7 @@ func TestGetLatestLedgerSequence(t *testing.T) {
 		On("GetLedgerHeader", uint32(64)).
 		Return(xdr.LedgerHeaderHistoryEntry{}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -659,7 +720,7 @@ func TestGetLatestLedgerSequenceRaceCondition(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	mockRunner := &stellarCoreRunnerMock{}
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 	mockRunner.On("runFrom", mock.Anything, mock.Anything).Return(nil)
 
@@ -674,7 +735,7 @@ func TestGetLatestLedgerSequenceRaceCondition(t *testing.T) {
 		On("GetLedgerHeader", mock.Anything).
 		Return(xdr.LedgerHeaderHistoryEntry{}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -726,9 +787,9 @@ func TestCaptiveGetLedger(t *testing.T) {
 	ctx, cancel := context.WithCancel(ctx)
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(65), uint32(66)).Return(nil)
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
-	mockRunner.On("getProcessExitError").Return(false, nil)
+	mockRunner.On("getProcessExitError").Return(nil, false)
 
 	mockArchive := &historyarchive.MockArchive{}
 	mockArchive.
@@ -737,7 +798,7 @@ func TestCaptiveGetLedger(t *testing.T) {
 			CurrentLedger: uint32(200),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -817,7 +878,7 @@ func TestCaptiveGetLedgerCacheLatestLedger(t *testing.T) {
 	defer cancel()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("runFrom", uint32(65), "0101010100000000000000000000000000000000000000000000000000000000").Return(nil).Once()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 
 	mockArchive := &historyarchive.MockArchive{}
@@ -835,7 +896,7 @@ func TestCaptiveGetLedgerCacheLatestLedger(t *testing.T) {
 			},
 		}, nil).Once()
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -879,7 +940,7 @@ func TestCaptiveGetLedger_NextLedgerIsDifferentToLedgerFromBuffer(t *testing.T) 
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(65), uint32(66)).Return(nil)
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 	mockRunner.On("close").Return(nil)
 
@@ -890,7 +951,7 @@ func TestCaptiveGetLedger_NextLedgerIsDifferentToLedgerFromBuffer(t *testing.T) 
 			CurrentLedger: uint32(200),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -925,7 +986,7 @@ func TestCaptiveGetLedger_NextLedger0RangeFromIsSmallerThanLedgerFromBuffer(t *t
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("runFrom", uint32(64), mock.Anything).Return(nil)
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 	mockRunner.On("close").Return(nil)
 
@@ -940,7 +1001,7 @@ func TestCaptiveGetLedger_NextLedger0RangeFromIsSmallerThanLedgerFromBuffer(t *t
 		On("GetLedgerHeader", uint32(65)).
 		Return(xdr.LedgerHeaderHistoryEntry{}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -975,11 +1036,12 @@ func TestCaptiveStellarCore_PrepareRangeAfterClose(t *testing.T) {
 
 	captiveStellarCore, err := NewCaptive(
 		CaptiveCoreConfig{
-			BinaryPath:         executablePath,
-			NetworkPassphrase:  networkPassphrase,
-			HistoryArchiveURLs: historyURLs,
-			Toml:               captiveCoreToml,
-			StoragePath:        storagePath,
+			BinaryPath:            executablePath,
+			NetworkPassphrase:     networkPassphrase,
+			HistoryArchiveURLs:    historyURLs,
+			Toml:                  captiveCoreToml,
+			StoragePath:           storagePath,
+			CoreProtocolVersionFn: func(string) (uint, error) { return 21, nil },
 		},
 	)
 	assert.NoError(t, err)
@@ -1026,13 +1088,13 @@ func TestCaptiveGetLedger_ErrReadingMetaResult(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(65), uint32(66)).Return(nil)
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	ctx, cancel := context.WithCancel(ctx)
 	mockRunner.On("context").Return(ctx)
 	mockRunner.On("close").Return(nil).Run(func(args mock.Arguments) {
 		cancel()
 	}).Once()
-	mockRunner.On("getProcessExitError").Return(false, nil)
+	mockRunner.On("getProcessExitError").Return(nil, false)
 
 	// even if the request to fetch the latest checkpoint succeeds, we should fail at creating the subprocess
 	mockArchive := &historyarchive.MockArchive{}
@@ -1042,7 +1104,7 @@ func TestCaptiveGetLedger_ErrReadingMetaResult(t *testing.T) {
 			CurrentLedger: uint32(200),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -1084,7 +1146,7 @@ func TestCaptiveGetLedger_ErrClosingAfterLastLedger(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(65), uint32(66)).Return(nil)
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 	mockRunner.On("close").Return(fmt.Errorf("transient error")).Once()
 
@@ -1095,7 +1157,7 @@ func TestCaptiveGetLedger_ErrClosingAfterLastLedger(t *testing.T) {
 			CurrentLedger: uint32(200),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -1126,7 +1188,7 @@ func TestCaptiveAfterClose(t *testing.T) {
 	mockRunner := &stellarCoreRunnerMock{}
 	ctx, cancel := context.WithCancel(context.Background())
 	mockRunner.On("catchup", uint32(65), uint32(66)).Return(nil)
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 	mockRunner.On("close").Return(nil).Once()
 
@@ -1137,7 +1199,7 @@ func TestCaptiveAfterClose(t *testing.T) {
 			CurrentLedger: uint32(200),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -1181,7 +1243,7 @@ func TestGetLedgerBoundsCheck(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("catchup", uint32(128), uint32(130)).Return(nil).Once()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 
 	mockArchive := &historyarchive.MockArchive{}
@@ -1191,7 +1253,7 @@ func TestGetLedgerBoundsCheck(t *testing.T) {
 			CurrentLedger: uint32(200),
 		}, nil)
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner
@@ -1305,9 +1367,9 @@ func TestCaptiveGetLedgerTerminatedUnexpectedly(t *testing.T) {
 			ctx := testCase.ctx
 			mockRunner := &stellarCoreRunnerMock{}
 			mockRunner.On("catchup", uint32(64), uint32(100)).Return(nil).Once()
-			mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+			mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 			mockRunner.On("context").Return(ctx)
-			mockRunner.On("getProcessExitError").Return(testCase.processExited, testCase.processExitedError)
+			mockRunner.On("getProcessExitError").Return(testCase.processExitedError, testCase.processExited)
 			mockRunner.On("close").Return(nil).Once()
 
 			mockArchive := &historyarchive.MockArchive{}
@@ -1317,7 +1379,7 @@ func TestCaptiveGetLedgerTerminatedUnexpectedly(t *testing.T) {
 					CurrentLedger: uint32(200),
 				}, nil)
 
-			captiveBackend := CaptiveStellarCore{
+			captiveBackend := &CaptiveStellarCore{
 				archive: mockArchive,
 				stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 					return mockRunner
@@ -1371,7 +1433,7 @@ func TestCaptiveUseOfLedgerHashStore(t *testing.T) {
 		Return("mnb", true, nil).Once()
 
 	cancelCalled := false
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive:           mockArchive,
 		ledgerHashStore:   mockLedgerHashStore,
 		checkpointManager: historyarchive.NewCheckpointManager(64),
@@ -1454,7 +1516,7 @@ func TestCaptiveRunFromParams(t *testing.T) {
 					CurrentLedger: uint32(255),
 				}, nil)
 
-			captiveBackend := CaptiveStellarCore{
+			captiveBackend := &CaptiveStellarCore{
 				archive:           mockArchive,
 				checkpointManager: historyarchive.NewCheckpointManager(64),
 			}
@@ -1473,10 +1535,10 @@ func TestCaptiveRunFromParams(t *testing.T) {
 func TestCaptiveIsPrepared(t *testing.T) {
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("context").Return(context.Background()).Maybe()
-	mockRunner.On("getProcessExitError").Return(false, nil)
+	mockRunner.On("getProcessExitError").Return(nil, false)
 
 	// c.prepared == nil
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		nextLedger: 0,
 	}
 
@@ -1509,7 +1571,7 @@ func TestCaptiveIsPrepared(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(fmt.Sprintf("next_%d_last_%d_cached_%d_range_%v", tc.nextLedger, tc.lastLedger, tc.cachedLedger, tc.ledgerRange), func(t *testing.T) {
-			captiveBackend := CaptiveStellarCore{
+			captiveBackend := &CaptiveStellarCore{
 				stellarCoreRunner: mockRunner,
 				nextLedger:        tc.nextLedger,
 				prepared:          &tc.preparedRange,
@@ -1537,10 +1599,10 @@ func TestCaptiveIsPreparedCoreContextCancelled(t *testing.T) {
 	mockRunner := &stellarCoreRunnerMock{}
 	ctx, cancel := context.WithCancel(context.Background())
 	mockRunner.On("context").Return(ctx).Maybe()
-	mockRunner.On("getProcessExitError").Return(false, nil)
+	mockRunner.On("getProcessExitError").Return(nil, false)
 
 	rang := UnboundedRange(100)
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		nextLedger:        100,
 		prepared:          &rang,
 		stellarCoreRunner: mockRunner,
@@ -1589,7 +1651,7 @@ func TestCaptivePreviousLedgerCheck(t *testing.T) {
 	ctx := context.Background()
 	mockRunner := &stellarCoreRunnerMock{}
 	mockRunner.On("runFrom", uint32(254), "0101010100000000000000000000000000000000000000000000000000000000").Return(nil).Once()
-	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan))
+	mockRunner.On("getMetaPipe").Return((<-chan metaResult)(metaChan), true)
 	mockRunner.On("context").Return(ctx)
 	mockRunner.On("close").Return(nil).Once()
 
@@ -1611,7 +1673,7 @@ func TestCaptivePreviousLedgerCheck(t *testing.T) {
 	mockLedgerHashStore.On("GetLedgerHash", ctx, uint32(299)).
 		Return("", false, nil).Once()
 
-	captiveBackend := CaptiveStellarCore{
+	captiveBackend := &CaptiveStellarCore{
 		archive: mockArchive,
 		stellarCoreRunnerFactory: func() stellarCoreRunnerInterface {
 			return mockRunner

@@ -9,8 +9,9 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/guregu/null"
-	"github.com/jmoiron/sqlx"
+
 	"github.com/stellar/go/services/horizon/internal/db2"
+	"github.com/stellar/go/support/db"
 	"github.com/stellar/go/support/errors"
 	"github.com/stellar/go/xdr"
 )
@@ -37,10 +38,7 @@ type LiquidityPool struct {
 type LiquidityPoolAssetReserves []LiquidityPoolAssetReserve
 
 func (c LiquidityPoolAssetReserves) Value() (driver.Value, error) {
-	// Convert the byte array into a string as a workaround to bypass buggy encoding in the pq driver
-	// (More info about this bug here https://github.com/stellar/go/issues/5086#issuecomment-1773215436).
-	val, err := json.Marshal(c)
-	return string(val), err
+	return json.Marshal(c)
 }
 
 func (c *LiquidityPoolAssetReserves) Scan(value interface{}) error {
@@ -94,7 +92,6 @@ type QLiquidityPools interface {
 	FindLiquidityPoolByID(ctx context.Context, liquidityPoolID string) (LiquidityPool, error)
 	GetUpdatedLiquidityPools(ctx context.Context, newerThanSequence uint32) ([]LiquidityPool, error)
 	CompactLiquidityPools(ctx context.Context, cutOffSequence uint32) (int64, error)
-	NewLiquidityPoolBatchInsertBuilder() LiquidityPoolBatchInsertBuilder
 }
 
 // UpsertLiquidityPools upserts a batch of liquidity pools  in the liquidity_pools table.
@@ -192,7 +189,7 @@ func (q *Q) GetLiquidityPools(ctx context.Context, query LiquidityPoolsQuery) ([
 }
 
 func (q *Q) StreamAllLiquidityPools(ctx context.Context, callback func(LiquidityPool) error) error {
-	var rows *sqlx.Rows
+	var rows *db.Rows
 	var err error
 
 	if rows, err = q.Query(ctx, selectLiquidityPools.Where("deleted = ?", false)); err != nil {

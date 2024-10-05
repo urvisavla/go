@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/guregu/null"
+
 	"github.com/stellar/go/ingest"
 	"github.com/stellar/go/support/db"
 	"github.com/stellar/go/support/errors"
@@ -26,7 +27,8 @@ type LedgerTransactionProcessor interface {
 }
 
 type LedgerTransactionFilterer interface {
-	FilterTransaction(ctx context.Context, transaction ingest.LedgerTransaction) (bool, error)
+	Name() string
+	FilterTransaction(ctx context.Context, transaction ingest.LedgerTransaction) (bool, bool, error)
 }
 
 func StreamLedgerTransactions(
@@ -45,7 +47,7 @@ func StreamLedgerTransactions(
 		if err != nil {
 			return errors.Wrap(err, "could not read transaction")
 		}
-		include, err := txFilterer.FilterTransaction(ctx, tx)
+		_, include, err := txFilterer.FilterTransaction(ctx, tx)
 		if err != nil {
 			return errors.Wrapf(
 				err,

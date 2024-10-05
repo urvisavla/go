@@ -25,15 +25,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stellar/go/support/config"
-
 	sdk "github.com/stellar/go/clients/horizonclient"
 	"github.com/stellar/go/clients/stellarcore"
-	"github.com/stellar/go/ingest/ledgerbackend"
 	"github.com/stellar/go/keypair"
 	proto "github.com/stellar/go/protocols/horizon"
+	horizoncmd "github.com/stellar/go/services/horizon/cmd"
 	horizon "github.com/stellar/go/services/horizon/internal"
 	"github.com/stellar/go/services/horizon/internal/ingest"
+	"github.com/stellar/go/support/config"
 	"github.com/stellar/go/support/db/dbtest"
 	"github.com/stellar/go/support/errors"
 	"github.com/stellar/go/txnbuild"
@@ -51,12 +50,7 @@ const (
 	sorobanRPCPort              = 8080
 )
 
-var (
-	HorizonInitErrStr       = "cannot initialize Horizon"
-	RunWithCaptiveCore      = os.Getenv("HORIZON_INTEGRATION_TESTS_ENABLE_CAPTIVE_CORE") != ""
-	RunWithSorobanRPC       = os.Getenv("HORIZON_INTEGRATION_TESTS_ENABLE_SOROBAN_RPC") != ""
-	RunWithCaptiveCoreUseDB = os.Getenv("HORIZON_INTEGRATION_TESTS_CAPTIVE_CORE_USE_DB") != ""
-)
+const HorizonInitErrStr = "cannot initialize Horizon"
 
 type Config struct {
 	ProtocolVersion           uint32
@@ -98,6 +92,8 @@ type Test struct {
 	config              Config
 	coreConfig          CaptiveConfig
 	horizonIngestConfig horizon.Config
+	horizonWebConfig    horizon.Config
+	testDB              *dbtest.DB
 	environment         *test.EnvironmentManager
 
 	horizonClient      *sdk.Client
@@ -170,39 +166,29 @@ func NewTest(t *testing.T, config Config) *Test {
 	i.coreClient = &stellarcore.Client{URL: "http://localhost:" + strconv.Itoa(stellarCorePort)}
 	if !config.SkipCoreContainerCreation {
 		i.waitForCore()
-		if RunWithSorobanRPC && i.config.EnableSorobanRPC {
+		if i.config.EnableSorobanRPC {
 			i.runComposeCommand("up", "--detach", "--quiet-pull", "--no-color", "soroban-rpc")
 			i.waitForSorobanRPC()
 		}
 	}
 
 	if !config.SkipHorizonStart {
-		if innerErr := i.StartHorizon(); innerErr != nil {
+		if innerErr := i.StartHorizon(true); innerErr != nil {
 			t.Fatalf("Failed to start Horizon: %v", innerErr)
 		}
 
-		i.WaitForHorizon()
+		i.WaitForHorizonIngest()
 	}
 
 	return i
 }
 
 func (i *Test) configureCaptiveCore() {
-	// We either test Captive Core through environment variables or through
-	// custom Horizon parameters.
-	if RunWithCaptiveCore {
-		composePath := findDockerComposePath()
-		i.coreConfig.binaryPath = os.Getenv("HORIZON_INTEGRATION_TESTS_CAPTIVE_CORE_BIN")
-		coreConfigFile := "captive-core-classic-integration-tests.cfg"
-		if i.config.ProtocolVersion >= ledgerbackend.MinimalSorobanProtocolSupport {
-			coreConfigFile = "captive-core-integration-tests.cfg"
-		}
-		i.coreConfig.configPath = filepath.Join(composePath, coreConfigFile)
-		i.coreConfig.storagePath = i.CurrentTest().TempDir()
-		if RunWithCaptiveCoreUseDB {
-			i.coreConfig.useDB = true
-		}
-	}
+	composePath := findDockerComposePath()
+	i.coreConfig.binaryPath = os.Getenv("HORIZON_INTEGRATION_TESTS_CAPTIVE_CORE_BIN")
+	i.coreConfig.configPath = filepath.Join(composePath, "captive-core-integration-tests.cfg")
+	i.coreConfig.storagePath = i.CurrentTest().TempDir()
+	i.coreConfig.useDB = true
 
 	if value := i.getIngestParameter(
 		horizon.StellarCoreBinaryPathName,
@@ -234,11 +220,12 @@ func (i *Test) runComposeCommand(args ...string) {
 	integrationSorobanRPCYaml := filepath.Join(i.composePath, "docker-compose.integration-tests.soroban-rpc.yml")
 
 	cmdline := args
-	if RunWithSorobanRPC {
+	if i.config.EnableSorobanRPC {
 		cmdline = append([]string{"-f", integrationSorobanRPCYaml}, cmdline...)
 	}
 	cmdline = append([]string{"-f", integrationYaml}, cmdline...)
-	cmd := exec.Command("docker-compose", cmdline...)
+	cmdline = append([]string{"compose"}, cmdline...)
+	cmd := exec.Command("docker", cmdline...)
 	coreImageOverride := ""
 	if i.config.CoreDockerImage != "" {
 		coreImageOverride = i.config.CoreDockerImage
@@ -263,13 +250,6 @@ func (i *Test) runComposeCommand(args ...string) {
 		cmd.Env = append(
 			cmd.Environ(),
 			fmt.Sprintf("SOROBAN_RPC_IMAGE=%s", sorobanRPCOverride),
-		)
-	}
-
-	if i.config.ProtocolVersion < ledgerbackend.MinimalSorobanProtocolSupport {
-		cmd.Env = append(
-			cmd.Environ(),
-			"CORE_CONFIG_FILE=stellar-core-classic-integration-tests.cfg",
 		)
 	}
 
@@ -299,7 +279,7 @@ func (i *Test) prepareShutdownHandlers() {
 			if !i.config.SkipCoreContainerCreation {
 				i.runComposeCommand("rm", "-fvs", "core")
 				i.runComposeCommand("rm", "-fvs", "core-postgres")
-				if os.Getenv("HORIZON_INTEGRATION_TESTS_ENABLE_SOROBAN_RPC") != "" {
+				if i.config.EnableSorobanRPC {
 					i.runComposeCommand("logs", "soroban-rpc")
 					i.runComposeCommand("rm", "-fvs", "soroban-rpc")
 				}
@@ -321,19 +301,28 @@ func (i *Test) prepareShutdownHandlers() {
 	}()
 }
 
-func (i *Test) RestartHorizon() error {
+// if startIngestProcess=true, will restart the ingest sub process also
+func (i *Test) RestartHorizon(restartIngestProcess bool) error {
 	i.StopHorizon()
 
-	if err := i.StartHorizon(); err != nil {
+	if err := i.StartHorizon(restartIngestProcess); err != nil {
 		return err
 	}
 
-	i.WaitForHorizon()
+	i.WaitForHorizonIngest()
 	return nil
 }
 
 func (i *Test) GetHorizonIngestConfig() horizon.Config {
 	return i.horizonIngestConfig
+}
+
+func (i *Test) GetHorizonWebConfig() horizon.Config {
+	return i.horizonWebConfig
+}
+
+func (i *Test) GetTestDB() *dbtest.DB {
+	return i.testDB
 }
 
 // Shutdown stops the integration tests and destroys all its associated
@@ -349,52 +338,32 @@ func (i *Test) Shutdown() {
 	})
 }
 
-// StartHorizon initializes and starts the Horizon client-facing API server and the ingest server.
-func (i *Test) StartHorizon() error {
-	postgres := dbtest.Postgres(i.t)
+// StartHorizon initializes and starts the Horizon client-facing API server.
+// When startIngestProcess=true, start a second process for ingest server
+func (i *Test) StartHorizon(startIngestProcess bool) error {
+	i.testDB = dbtest.Postgres(i.t)
 	i.shutdownCalls = append(i.shutdownCalls, func() {
+		if i.appStopped == nil {
+			// appStopped is nil when the horizon cmd.Execute creates an App, but gets an intentional error and StartHorizon
+			// never gets to point of running App.Serve() which would have closed the db conn eventually
+			// since it wires up listener to App.Close() invocation, so, we must manually detect this edge case and
+			// close the app's db here to clean up
+			if i.webNode != nil {
+				i.webNode.CloseDB()
+			}
+			if i.ingestNode != nil {
+				i.ingestNode.CloseDB()
+			}
+		}
 		i.StopHorizon()
-		postgres.Close()
+		i.testDB.Close()
 	})
+	var err error
 
 	// To facilitate custom runs of Horizon, we merge a default set of
 	// parameters with the tester-supplied ones (if any).
-	mergedWebArgs := MergeMaps(i.getDefaultWebArgs(postgres), i.config.HorizonWebParameters)
-	webArgs := mapToFlags(mergedWebArgs)
-	i.t.Log("Horizon command line webArgs:", webArgs)
-
-	mergedIngestArgs := MergeMaps(i.getDefaultIngestArgs(postgres), i.config.HorizonIngestParameters)
-	ingestArgs := mapToFlags(mergedIngestArgs)
-	i.t.Log("Horizon command line ingestArgs:", ingestArgs)
-
-	// setup Horizon web command
-	var err error
-	webConfig, webConfigOpts := horizon.Flags()
-	webCmd := i.createWebCommand(webConfig, webConfigOpts)
-	webCmd.SetArgs(webArgs)
-	if err = webConfigOpts.Init(webCmd); err != nil {
-		return errors.Wrap(err, "cannot initialize params")
-	}
-
-	// setup Horizon ingest command
-	ingestConfig, ingestConfigOpts := horizon.Flags()
-	ingestCmd := i.createIngestCommand(ingestConfig, ingestConfigOpts)
-	ingestCmd.SetArgs(ingestArgs)
-	if err = ingestConfigOpts.Init(ingestCmd); err != nil {
-		return errors.Wrap(err, "cannot initialize params")
-	}
-
-	if err = i.initializeEnvironmentVariables(); err != nil {
-		return err
-	}
-
-	if err = ingestCmd.Execute(); err != nil {
-		return errors.Wrap(err, HorizonInitErrStr)
-	}
-
-	if err = webCmd.Execute(); err != nil {
-		return errors.Wrap(err, HorizonInitErrStr)
-	}
+	mergedWebArgs := MergeMaps(i.getDefaultWebArgs(), i.config.HorizonWebParameters)
+	mergedIngestArgs := MergeMaps(i.getDefaultIngestArgs(), i.config.HorizonIngestParameters)
 
 	// Set up Horizon clients
 	i.setupHorizonClient(mergedWebArgs)
@@ -402,14 +371,58 @@ func (i *Test) StartHorizon() error {
 		return err
 	}
 
-	i.horizonIngestConfig = *ingestConfig
+	if err = i.initializeEnvironmentVariables(); err != nil {
+		return err
+	}
+
+	// setup Horizon web process
+	webArgs := mapToFlags(mergedWebArgs)
+	i.t.Log("Horizon command line webArgs:", webArgs)
+	webConfig, webConfigOpts := horizon.Flags()
+	webCmd := i.createWebCommand(webConfig, webConfigOpts)
+	webCmd.SetArgs(webArgs)
+	if err = webConfigOpts.Init(webCmd); err != nil {
+		return errors.Wrap(err, "cannot initialize params")
+	}
+	if err = webCmd.Execute(); err != nil {
+		return errors.Wrap(err, HorizonInitErrStr)
+	}
+	i.horizonWebConfig = *webConfig
+
+	// setup horizon ingest process
+	if startIngestProcess {
+		ingestArgs := mapToFlags(mergedIngestArgs)
+		i.t.Log("Horizon command line ingestArgs:", ingestArgs)
+		// setup Horizon ingest command
+		ingestConfig, ingestConfigOpts := horizon.Flags()
+		ingestCmd := i.createIngestCommand(ingestConfig, ingestConfigOpts)
+		ingestCmd.SetArgs(ingestArgs)
+		if err = ingestConfigOpts.Init(ingestCmd); err != nil {
+			return errors.Wrap(err, "cannot initialize params")
+		}
+		if err = ingestCmd.Execute(); err != nil {
+			return errors.Wrap(err, HorizonInitErrStr)
+		}
+		i.horizonIngestConfig = *ingestConfig
+	} else {
+		// not running ingestion, normally that process would do migration through --apply-migrations
+		// so migrage the empty in any case directly
+		var rootCmd = horizoncmd.NewRootCmd()
+		rootCmd.SetArgs([]string{
+			"db", "migrate", "up", "--db-url", i.testDB.DSN})
+		require.NoError(i.t, rootCmd.Execute())
+	}
 
 	i.appStopped = &sync.WaitGroup{}
-	i.appStopped.Add(2)
-	go func() {
-		_ = i.ingestNode.Serve()
-		i.appStopped.Done()
-	}()
+	if i.ingestNode != nil {
+		i.appStopped.Add(1)
+		go func() {
+			_ = i.ingestNode.Serve()
+			i.appStopped.Done()
+		}()
+	}
+
+	i.appStopped.Add(1)
 	go func() {
 		_ = i.webNode.Serve()
 		i.appStopped.Done()
@@ -418,13 +431,13 @@ func (i *Test) StartHorizon() error {
 	return nil
 }
 
-func (i *Test) getDefaultArgs(postgres *dbtest.DB) map[string]string {
+func (i *Test) getDefaultArgs() map[string]string {
 	// TODO: Ideally, we'd be pulling host/port information from the Docker
 	//       Compose YAML file itself rather than hardcoding it.
 	return map[string]string{
 		"ingest":               "false",
 		"history-archive-urls": fmt.Sprintf("http://%s:%d", "localhost", historyArchivePort),
-		"db-url":               postgres.RO_DSN,
+		"db-url":               i.testDB.RO_DSN,
 		"stellar-core-url":     i.coreClient.URL,
 		"network-passphrase":   i.passPhrase,
 		"apply-migrations":     "true",
@@ -436,19 +449,19 @@ func (i *Test) getDefaultArgs(postgres *dbtest.DB) map[string]string {
 	}
 }
 
-func (i *Test) getDefaultWebArgs(postgres *dbtest.DB) map[string]string {
-	return MergeMaps(i.getDefaultArgs(postgres), map[string]string{"admin-port": "0"})
+func (i *Test) getDefaultWebArgs() map[string]string {
+	return MergeMaps(i.getDefaultArgs(), map[string]string{"admin-port": "0"})
 }
 
-func (i *Test) getDefaultIngestArgs(postgres *dbtest.DB) map[string]string {
-	return MergeMaps(i.getDefaultArgs(postgres), map[string]string{
+func (i *Test) getDefaultIngestArgs() map[string]string {
+	return MergeMaps(i.getDefaultArgs(), map[string]string{
 		"admin-port":                strconv.Itoa(i.AdminPort()),
 		"port":                      "8001",
-		"db-url":                    postgres.DSN,
+		"db-url":                    i.testDB.DSN,
 		"stellar-core-binary-path":  i.coreConfig.binaryPath,
 		"captive-core-config-path":  i.coreConfig.configPath,
 		"captive-core-http-port":    "21626",
-		"captive-core-use-db":       strconv.FormatBool(i.coreConfig.useDB),
+		"captive-core-use-db":       "true",
 		"captive-core-storage-path": i.coreConfig.storagePath,
 		"ingest":                    "true"})
 }
@@ -658,7 +671,7 @@ func (i *Test) simulateTransaction(
 ) (RPCSimulateTxResponse, xdr.SorobanTransactionData) {
 	// Before preflighting, make sure soroban-rpc is in sync with Horizon
 	root, err := i.horizonClient.Root()
-	require.NoError(i.t, err)
+	assert.NoError(i.t, err)
 	i.syncWithSorobanRPC(uint32(root.HorizonSequence))
 
 	// TODO: soroban-tools should be exporting a proper Go client
@@ -683,6 +696,7 @@ func (i *Test) simulateTransaction(
 	fmt.Printf("Transaction Data:\n\n%# +v\n\n", pretty.Formatter(transactionData))
 	return result, transactionData
 }
+
 func (i *Test) syncWithSorobanRPC(ledgerToWaitFor uint32) {
 	for j := 0; j < 20; j++ {
 		result := struct {
@@ -700,16 +714,109 @@ func (i *Test) syncWithSorobanRPC(ledgerToWaitFor uint32) {
 	i.t.Fatal("Time out waiting for soroban-rpc to sync")
 }
 
-func (i *Test) PreflightBumpFootprintExpiration(
-	sourceAccount txnbuild.Account, bumpFootprint txnbuild.BumpFootprintExpiration,
-) (txnbuild.BumpFootprintExpiration, int64) {
-	result, transactionData := i.simulateTransaction(sourceAccount, &bumpFootprint)
+func (i *Test) WaitUntilLedgerEntryTTL(ledgerKey xdr.LedgerKey) {
+	ch := jhttp.NewChannel("http://localhost:"+strconv.Itoa(sorobanRPCPort), nil)
+	client := jrpc2.NewClient(ch, nil)
+
+	keyB64, err := xdr.MarshalBase64(ledgerKey)
+	assert.NoError(i.t, err)
+	request := struct {
+		Keys []string `json:"keys"`
+	}{
+		Keys: []string{keyB64},
+	}
+	ttled := false
+	for attempt := 0; attempt < 50; attempt++ {
+		var result struct {
+			Entries []struct {
+				LiveUntilLedgerSeq *uint32 `json:"liveUntilLedgerSeq,omitempty"`
+			} `json:"entries"`
+		}
+		err := client.CallResult(context.Background(), "getLedgerEntries", request, &result)
+		assert.NoError(i.t, err)
+		if len(result.Entries) > 0 {
+			liveUntilLedgerSeq := *result.Entries[0].LiveUntilLedgerSeq
+
+			root, err := i.horizonClient.Root()
+			assert.NoError(i.t, err)
+			if uint32(root.HorizonSequence) > liveUntilLedgerSeq {
+				ttled = true
+				i.t.Logf("ledger entry ttl'ed")
+				break
+			}
+			i.t.Log("waiting for ledger entry to ttl at ledger", liveUntilLedgerSeq)
+		} else {
+			i.t.Log("waiting for soroban-rpc to ingest the ledger entries")
+		}
+		time.Sleep(time.Second)
+	}
+	assert.True(i.t, ttled)
+}
+
+func (i *Test) PreflightExtendExpiration(
+	account string, ledgerKeys []xdr.LedgerKey, extendAmt uint32,
+) (proto.Account, txnbuild.ExtendFootprintTtl, int64) {
+	sourceAccount, err := i.Client().AccountDetail(sdk.AccountRequest{
+		AccountID: account,
+	})
+	assert.NoError(i.t, err)
+
+	bumpFootprint := txnbuild.ExtendFootprintTtl{
+		ExtendTo:      extendAmt,
+		SourceAccount: "",
+		Ext: xdr.TransactionExt{
+			V: 1,
+			SorobanData: &xdr.SorobanTransactionData{
+				Ext: xdr.ExtensionPoint{},
+				Resources: xdr.SorobanResources{
+					Footprint: xdr.LedgerFootprint{
+						ReadOnly:  ledgerKeys,
+						ReadWrite: nil,
+					},
+				},
+				ResourceFee: 0,
+			},
+		},
+	}
+	result, transactionData := i.simulateTransaction(&sourceAccount, &bumpFootprint)
 	bumpFootprint.Ext = xdr.TransactionExt{
 		V:           1,
 		SorobanData: &transactionData,
 	}
 
-	return bumpFootprint, result.MinResourceFee
+	return sourceAccount, bumpFootprint, result.MinResourceFee
+}
+
+func (i *Test) RestoreFootprint(
+	account string, ledgerKey xdr.LedgerKey,
+) (proto.Account, txnbuild.RestoreFootprint, int64) {
+	sourceAccount, err := i.Client().AccountDetail(sdk.AccountRequest{
+		AccountID: account,
+	})
+	assert.NoError(i.t, err)
+
+	restoreFootprint := txnbuild.RestoreFootprint{
+		SourceAccount: "",
+		Ext: xdr.TransactionExt{
+			V: 1,
+			SorobanData: &xdr.SorobanTransactionData{
+				Ext: xdr.ExtensionPoint{},
+				Resources: xdr.SorobanResources{
+					Footprint: xdr.LedgerFootprint{
+						ReadWrite: []xdr.LedgerKey{ledgerKey},
+					},
+				},
+				ResourceFee: 0,
+			},
+		},
+	}
+	result, transactionData := i.simulateTransaction(&sourceAccount, &restoreFootprint)
+	restoreFootprint.Ext = xdr.TransactionExt{
+		V:           1,
+		SorobanData: &transactionData,
+	}
+
+	return sourceAccount, restoreFootprint, result.MinResourceFee
 }
 
 // UpgradeProtocol arms Core with upgrade and blocks until protocol is upgraded.
@@ -741,7 +848,17 @@ func (i *Test) UpgradeProtocol(version uint32) {
 	i.t.Fatalf("could not upgrade protocol in 10s")
 }
 
-func (i *Test) WaitForHorizon() {
+func (i *Test) WaitForHorizonWeb() {
+	// wait until the web server is up before continuing to test requests
+	require.Eventually(i.t, func() bool {
+		if _, horizonErr := i.Client().Root(); horizonErr != nil {
+			return false
+		}
+		return true
+	}, time.Second*15, time.Millisecond*100)
+}
+
+func (i *Test) WaitForHorizonIngest() {
 	for t := 60; t >= 0; t -= 1 {
 		time.Sleep(time.Second)
 
@@ -822,6 +939,11 @@ func (i *Test) AdminPort() int {
 // Metrics URL returns Horizon metrics URL.
 func (i *Test) MetricsURL() string {
 	return fmt.Sprintf("http://localhost:%d/metrics", i.AdminPort())
+}
+
+// AsyncTxSubOpenAPISpecURL returns the URL for getting the openAPI spec yaml for async-txsub endpoint.
+func (i *Test) AsyncTxSubOpenAPISpecURL() string {
+	return fmt.Sprintf("http://localhost:%d/transactions_async", i.AdminPort())
 }
 
 // Master returns a keypair of the network masterKey account.
@@ -1057,6 +1179,16 @@ func (i *Test) SubmitMultiSigTransaction(
 		return proto.Transaction{}, err
 	}
 	return i.Client().SubmitTransaction(tx)
+}
+
+func (i *Test) AsyncSubmitTransaction(
+	signer *keypair.Full, txParams txnbuild.TransactionParams,
+) (proto.AsyncTransactionSubmissionResponse, error) {
+	tx, err := i.CreateSignedTransaction([]*keypair.Full{signer}, txParams)
+	if err != nil {
+		return proto.AsyncTransactionSubmissionResponse{}, err
+	}
+	return i.Client().AsyncSubmitTransaction(tx)
 }
 
 func (i *Test) MustSubmitMultiSigTransaction(

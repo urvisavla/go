@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+
 	"github.com/stellar/go/historyarchive"
 	horizon "github.com/stellar/go/services/horizon/internal"
 	"github.com/stellar/go/services/horizon/internal/db2/history"
@@ -94,7 +95,7 @@ var ingestVerifyRangeCmd = &cobra.Command{
 			co.SetValue()
 		}
 
-		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false, AlwaysIngest: true}); err != nil {
+		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false}); err != nil {
 			return err
 		}
 
@@ -125,17 +126,16 @@ var ingestVerifyRangeCmd = &cobra.Command{
 		}
 
 		ingestConfig := ingest.Config{
-			NetworkPassphrase:        globalConfig.NetworkPassphrase,
-			HistorySession:           horizonSession,
-			HistoryArchiveURLs:       globalConfig.HistoryArchiveURLs,
-			CaptiveCoreBinaryPath:    globalConfig.CaptiveCoreBinaryPath,
-			CaptiveCoreConfigUseDB:   globalConfig.CaptiveCoreConfigUseDB,
-			RemoteCaptiveCoreURL:     globalConfig.RemoteCaptiveCoreURL,
-			CheckpointFrequency:      globalConfig.CheckpointFrequency,
-			CaptiveCoreToml:          globalConfig.CaptiveCoreToml,
-			CaptiveCoreStoragePath:   globalConfig.CaptiveCoreStoragePath,
-			RoundingSlippageFilter:   globalConfig.RoundingSlippageFilter,
-			EnableIngestionFiltering: globalConfig.EnableIngestionFiltering,
+			NetworkPassphrase:      globalConfig.NetworkPassphrase,
+			HistorySession:         horizonSession,
+			HistoryArchiveURLs:     globalConfig.HistoryArchiveURLs,
+			HistoryArchiveCaching:  globalConfig.HistoryArchiveCaching,
+			CaptiveCoreBinaryPath:  globalConfig.CaptiveCoreBinaryPath,
+			CaptiveCoreConfigUseDB: globalConfig.CaptiveCoreConfigUseDB,
+			CheckpointFrequency:    globalConfig.CheckpointFrequency,
+			CaptiveCoreToml:        globalConfig.CaptiveCoreToml,
+			CaptiveCoreStoragePath: globalConfig.CaptiveCoreStoragePath,
+			RoundingSlippageFilter: globalConfig.RoundingSlippageFilter,
 		}
 
 		system, err := ingest.NewSystem(ingestConfig)
@@ -190,7 +190,7 @@ var ingestStressTestCmd = &cobra.Command{
 			co.SetValue()
 		}
 
-		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false, AlwaysIngest: true}); err != nil {
+		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false}); err != nil {
 			return err
 		}
 
@@ -211,9 +211,9 @@ var ingestStressTestCmd = &cobra.Command{
 			NetworkPassphrase:      globalConfig.NetworkPassphrase,
 			HistorySession:         horizonSession,
 			HistoryArchiveURLs:     globalConfig.HistoryArchiveURLs,
+			HistoryArchiveCaching:  globalConfig.HistoryArchiveCaching,
 			RoundingSlippageFilter: globalConfig.RoundingSlippageFilter,
 			CaptiveCoreBinaryPath:  globalConfig.CaptiveCoreBinaryPath,
-			RemoteCaptiveCoreURL:   globalConfig.RemoteCaptiveCoreURL,
 			CaptiveCoreConfigUseDB: globalConfig.CaptiveCoreConfigUseDB,
 		}
 
@@ -240,7 +240,7 @@ var ingestTriggerStateRebuildCmd = &cobra.Command{
 	Short: "updates a database to trigger state rebuild, state will be rebuilt by a running Horizon instance, DO NOT RUN production DB, some endpoints will be unavailable until state is rebuilt",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false, AlwaysIngest: true}); err != nil {
+		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false}); err != nil {
 			return err
 		}
 
@@ -264,7 +264,7 @@ var ingestInitGenesisStateCmd = &cobra.Command{
 	Short: "ingests genesis state (ledger 1)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false, AlwaysIngest: true}); err != nil {
+		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false}); err != nil {
 			return err
 		}
 
@@ -285,14 +285,13 @@ var ingestInitGenesisStateCmd = &cobra.Command{
 		}
 
 		ingestConfig := ingest.Config{
-			NetworkPassphrase:        globalConfig.NetworkPassphrase,
-			HistorySession:           horizonSession,
-			HistoryArchiveURLs:       globalConfig.HistoryArchiveURLs,
-			CheckpointFrequency:      globalConfig.CheckpointFrequency,
-			RoundingSlippageFilter:   globalConfig.RoundingSlippageFilter,
-			EnableIngestionFiltering: globalConfig.EnableIngestionFiltering,
-			CaptiveCoreBinaryPath:    globalConfig.CaptiveCoreBinaryPath,
-			CaptiveCoreConfigUseDB:   globalConfig.CaptiveCoreConfigUseDB,
+			NetworkPassphrase:      globalConfig.NetworkPassphrase,
+			HistorySession:         horizonSession,
+			HistoryArchiveURLs:     globalConfig.HistoryArchiveURLs,
+			CheckpointFrequency:    globalConfig.CheckpointFrequency,
+			RoundingSlippageFilter: globalConfig.RoundingSlippageFilter,
+			CaptiveCoreBinaryPath:  globalConfig.CaptiveCoreBinaryPath,
+			CaptiveCoreConfigUseDB: globalConfig.CaptiveCoreConfigUseDB,
 		}
 
 		system, err := ingest.NewSystem(ingestConfig)
@@ -322,7 +321,7 @@ var ingestBuildStateCmd = &cobra.Command{
 			co.SetValue()
 		}
 
-		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false, AlwaysIngest: true}); err != nil {
+		if err := horizon.ApplyFlags(globalConfig, globalFlags, horizon.ApplyOptions{RequireCaptiveCoreFullConfig: false}); err != nil {
 			return err
 		}
 
@@ -348,17 +347,16 @@ var ingestBuildStateCmd = &cobra.Command{
 		}
 
 		ingestConfig := ingest.Config{
-			NetworkPassphrase:        globalConfig.NetworkPassphrase,
-			HistorySession:           horizonSession,
-			HistoryArchiveURLs:       globalConfig.HistoryArchiveURLs,
-			CaptiveCoreBinaryPath:    globalConfig.CaptiveCoreBinaryPath,
-			CaptiveCoreConfigUseDB:   globalConfig.CaptiveCoreConfigUseDB,
-			RemoteCaptiveCoreURL:     globalConfig.RemoteCaptiveCoreURL,
-			CheckpointFrequency:      globalConfig.CheckpointFrequency,
-			CaptiveCoreToml:          globalConfig.CaptiveCoreToml,
-			CaptiveCoreStoragePath:   globalConfig.CaptiveCoreStoragePath,
-			RoundingSlippageFilter:   globalConfig.RoundingSlippageFilter,
-			EnableIngestionFiltering: globalConfig.EnableIngestionFiltering,
+			NetworkPassphrase:      globalConfig.NetworkPassphrase,
+			HistorySession:         horizonSession,
+			HistoryArchiveURLs:     globalConfig.HistoryArchiveURLs,
+			HistoryArchiveCaching:  globalConfig.HistoryArchiveCaching,
+			CaptiveCoreBinaryPath:  globalConfig.CaptiveCoreBinaryPath,
+			CaptiveCoreConfigUseDB: globalConfig.CaptiveCoreConfigUseDB,
+			CheckpointFrequency:    globalConfig.CheckpointFrequency,
+			CaptiveCoreToml:        globalConfig.CaptiveCoreToml,
+			CaptiveCoreStoragePath: globalConfig.CaptiveCoreStoragePath,
+			RoundingSlippageFilter: globalConfig.RoundingSlippageFilter,
 		}
 
 		system, err := ingest.NewSystem(ingestConfig)

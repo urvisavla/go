@@ -164,7 +164,7 @@ func (handler GetTradesHandler) GetResourcePage(w HeaderWriter, r *http.Request)
 		return nil, err
 	}
 
-	err = validateCursorWithinHistory(handler.LedgerState, pq)
+	err = validateAndAdjustCursor(handler.LedgerState, &pq)
 	if err != nil {
 		return nil, err
 	}
@@ -287,10 +287,7 @@ func (handler GetTradeAggregationsHandler) GetResource(w HeaderWriter, r *http.R
 	if err != nil {
 		return nil, err
 	}
-	err = validateCursorWithinHistory(handler.LedgerState, pq)
-	if err != nil {
-		return nil, err
-	}
+
 	qp := TradeAggregationsQuery{}
 	if err = getParams(&qp, r); err != nil {
 		return nil, err
