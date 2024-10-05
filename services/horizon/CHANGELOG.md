@@ -11,13 +11,13 @@ file. This project adheres to [Semantic Versioning](http://semver.org/).
   - This updates the default behavior of captive core to start in on-disk mode.
   - To continue using the previous in-memory mode, explicitly set the `--captive-core-use-db` flag to false
 
-## 4.25.1
+## 2.25.1
 
 ### Changes
 
 - Bump Go to the latest version (1.20.1), including crypto/tls, mime/multipart, net/http, and path/filepath security fixes.
 
-## 4.25.1
+## 2.25.1
 
 ### Changes
 
@@ -31,13 +31,13 @@ file. This project adheres to [Semantic Versioning](http://semver.org/).
 
 * Improve error when setting `BUCKET_DIR_PATH` and using Captive Core ([4736](https://github.com/stellar/go/pull/4736)).
 
-## 25.25.1
+## 2.25.1
 
 ### Changes
 
 - Bump Go to the latest version, including net/http security fixes.
 
-## 25.23.0
+## 2.24.0
 
 **Upgrading to this version will trigger a state rebuild. During this process, Horizon will not ingest new ledgers.**
 
@@ -48,7 +48,7 @@ file. This project adheres to [Semantic Versioning](http://semver.org/).
 * The ingestion subsystem will now properly use a pool of history archives if more than one is provided. ([#4687](https://github.com/stellar/go/pull/4687))
 * Add `horizon ingest build-state` command which builds state at a specific ledger. Useful for debugging. ([#4636](https://github.com/stellar/go/pull/4636))
 
-## 2.22.1
+## 2.23.1
 
 **Upgrading to this version from <= v2.8.3 will trigger a state rebuild. During this process (which will take at least 10 minutes), Horizon will not ingest new ledgers.**
 
