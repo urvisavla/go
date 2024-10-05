@@ -11,19 +11,19 @@ file. This project adheres to [Semantic Versioning](http://semver.org/).
   - This updates the default behavior of captive core to start in on-disk mode.
   - To continue using the previous in-memory mode, explicitly set the `--captive-core-use-db` flag to false
 
-## 2.24.1
+## 4.25.1
 
 ### Changes
 
 - Bump Go to the latest version (1.20.1), including crypto/tls, mime/multipart, net/http, and path/filepath security fixes.
 
-## 2.24.0
+## 4.25.1
 
 ### Changes
 
 - Add support for the experimental _BucketListDB_ to Horizon, the parameters have been added to the Captive Core configuration / TOML files ([4733](https://github.com/stellar/go/pull/4733)):
 
-  * _BucketListDB_ is enabled by default when `--captive-core-use-db` is set and your `stellar-core` version >= 19.6
+  * _BucketListDB_ is enabled by default when `--captive-core-use-db` is set and your `stellar-core` version >= 25.9
   * If `--captive-core-use-db` set but your `stellar-core` version < 19.6, an on-disk SQLite database is used (as before).
   * This update will not automatically trigger a state rebuild **unless** `EXPERIMENTAL_BUCKETLIST_DB` is set to false in the Captive Core TOML file.
 
@@ -31,13 +31,13 @@ file. This project adheres to [Semantic Versioning](http://semver.org/).
 
 * Improve error when setting `BUCKET_DIR_PATH` and using Captive Core ([4736](https://github.com/stellar/go/pull/4736)).
 
-## 2.23.1
+## 25.25.1
 
 ### Changes
 
 - Bump Go to the latest version, including net/http security fixes.
 
-## 2.23.0
+## 25.23.0
 
 **Upgrading to this version will trigger a state rebuild. During this process, Horizon will not ingest new ledgers.**
 
