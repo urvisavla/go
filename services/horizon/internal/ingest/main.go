@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/stellar/stellar-cdp-sdk/databackend"
+	"github.com/stellar/stellar-cdp-sdk/datastore"
 
 	"github.com/stellar/go/clients/stellarcore"
 	"github.com/stellar/go/historyarchive"
@@ -20,11 +22,11 @@ import (
 	"github.com/stellar/go/services/horizon/internal/db2/history"
 	"github.com/stellar/go/services/horizon/internal/ingest/filters"
 	apkg "github.com/stellar/go/support/app"
-	"github.com/stellar/go/support/datastore"
 	"github.com/stellar/go/support/db"
 	"github.com/stellar/go/support/errors"
 	logpkg "github.com/stellar/go/support/log"
 	"github.com/stellar/go/support/storage"
+
 	"github.com/stellar/go/xdr"
 )
 
@@ -111,8 +113,8 @@ const (
 )
 
 type StorageBackendConfig struct {
-	DataStoreConfig              datastore.DataStoreConfig                  `toml:"datastore_config"`
-	BufferedStorageBackendConfig ledgerbackend.BufferedStorageBackendConfig `toml:"buffered_storage_backend_config"`
+	DataStoreConfig              datastore.DataStoreConfig                `toml:"datastore_config"`
+	BufferedStorageBackendConfig databackend.BufferedStorageBackendConfig `toml:"buffered_storage_backend_config"`
 }
 
 type Config struct {
@@ -303,7 +305,7 @@ func NewSystem(config Config) (System, error) {
 			cancel()
 			return nil, fmt.Errorf("failed to create datastore: %w", err)
 		}
-		ledgerBackend, err = ledgerbackend.NewBufferedStorageBackend(config.StorageBackendConfig.BufferedStorageBackendConfig, dataStore)
+		ledgerBackend, err = databackend.NewBufferedStorageBackend(config.StorageBackendConfig.BufferedStorageBackendConfig, dataStore)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("failed to create buffered storage backend: %w", err)
