@@ -1104,7 +1104,7 @@ func TestOperationParticipants(t *testing.T) {
 		xdr.MustAddress("GDRW375MAYR46ODGF2WGANQC2RRZL7O246DYHHCGWTV2RE7IHE2QUQLD"),
 		xdr.MustAddress("GACAR2AEYEKITE2LKI5RMXF5MIVZ6Q7XILROGDT22O7JX4DSWFS7FDDP"),
 	}
-	participantsMap, err := operationsParticipants(transaction, sequence)
+	participantsMap, err := operationsParticipants(transaction, sequence, networkPassphrase)
 	tt.NoError(err)
 	tt.Len(participantsMap, 1)
 	for k, v := range participantsMap {
