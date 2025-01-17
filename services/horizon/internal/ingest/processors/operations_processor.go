@@ -1047,33 +1047,6 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 	case xdr.OperationTypeLiquidityPoolWithdraw:
 		// the only direct participant is the source_account
 	case xdr.OperationTypeInvokeHostFunction:
-		changes, err := operation.transaction.GetOperationChanges(operation.index)
-		if err != nil {
-			return participants, err
-		}
-
-		for _, change := range changes {
-			if change.Type == xdr.LedgerEntryTypeAccount || change.Type == xdr.LedgerEntryTypeTrustline {
-				var data xdr.LedgerEntryData
-				switch {
-				case change.Post != nil:
-					data = change.Post.Data
-				case change.Pre != nil:
-					data = change.Pre.Data
-				default:
-					log.Errorf("Change Type %s with no pre or post", change.Type.String())
-					continue
-				}
-
-				switch change.Type {
-				case xdr.LedgerEntryTypeAccount:
-					participants = append(participants, data.MustAccount().AccountId)
-				case xdr.LedgerEntryTypeTrustline:
-					participants = append(participants, data.MustTrustLine().AccountId)
-				}
-			}
-		}
-
 		diagnosticEvents, err := operation.transaction.GetDiagnosticEvents()
 		if err != nil {
 			return participants, err
@@ -1081,6 +1054,8 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 
 		for _, contractEvent := range filterEvents(diagnosticEvents) {
 			if sacEvent, err := contractevents.NewStellarAssetContractEvent(&contractEvent, operation.network); err == nil {
+				// 'to' and 'from' fields in these events can be either a Contract address or an Account address. We're
+				// only interested in account addresses and will skip Contract addresses.
 				switch sacEvent.GetType() {
 				case contractevents.EventTypeTransfer:
 					transferEvt := sacEvent.(*contractevents.TransferEvent)
@@ -1109,6 +1084,34 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 			}
 		}
 
+		// The SAC events above should be sufficient to identify the participating accounts. However,
+		// to be thorough, we will also iterate through the operation Changes to ensure no participants are missed.
+		changes, err := operation.transaction.GetOperationChanges(operation.index)
+		if err != nil {
+			return participants, err
+		}
+
+		for _, change := range changes {
+			if change.Type == xdr.LedgerEntryTypeAccount || change.Type == xdr.LedgerEntryTypeTrustline {
+				var data xdr.LedgerEntryData
+				switch {
+				case change.Post != nil:
+					data = change.Post.Data
+				case change.Pre != nil:
+					data = change.Pre.Data
+				default:
+					log.Errorf("Change Type %s with no pre or post", change.Type.String())
+					continue
+				}
+
+				switch change.Type {
+				case xdr.LedgerEntryTypeAccount:
+					participants = append(participants, data.MustAccount().AccountId)
+				case xdr.LedgerEntryTypeTrustline:
+					participants = append(participants, data.MustTrustLine().AccountId)
+				}
+			}
+		}
 	case xdr.OperationTypeExtendFootprintTtl:
 		// the only direct participant is the source_account
 	case xdr.OperationTypeRestoreFootprint:
