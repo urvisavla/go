@@ -1047,8 +1047,10 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 	case xdr.OperationTypeLiquidityPoolWithdraw:
 		// the only direct participant is the source_account
 	case xdr.OperationTypeInvokeHostFunction:
-		diagnosticEvents, err := operation.transaction.GetDiagnosticEvents()
-		if err != nil {
+		var err error
+		var diagnosticEvents []xdr.DiagnosticEvent
+
+		if diagnosticEvents, err = operation.transaction.GetDiagnosticEvents(); err != nil {
 			return participants, err
 		}
 
@@ -1086,8 +1088,8 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 
 		// The SAC events above should be sufficient to identify the participating accounts. However,
 		// to be thorough, we will also iterate through the operation Changes to ensure no participants are missed.
-		changes, err := operation.transaction.GetOperationChanges(operation.index)
-		if err != nil {
+		var changes []ingest.Change
+		if changes, err = operation.transaction.GetOperationChanges(operation.index); err != nil {
 			return participants, err
 		}
 
