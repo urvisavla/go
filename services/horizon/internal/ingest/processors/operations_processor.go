@@ -1069,7 +1069,7 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 		if diagnosticEvents, err := operation.transaction.GetDiagnosticEvents(); err != nil {
 			return participants, err
 		} else {
-			participants = append(participants, operation.getParticipantsFromSACEvents(filterEvents(diagnosticEvents))...)
+			participants = append(participants, getParticipantsFromSACEvents(filterEvents(diagnosticEvents), operation.network)...)
 		}
 
 	case xdr.OperationTypeExtendFootprintTtl:
@@ -1091,11 +1091,11 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 	return dedupeParticipants(participants), nil
 }
 
-func (operation *transactionOperationWrapper) getParticipantsFromSACEvents(contractEvents []xdr.ContractEvent) []xdr.AccountId {
+func getParticipantsFromSACEvents(contractEvents []xdr.ContractEvent, network string) []xdr.AccountId {
 	var participants []xdr.AccountId
 
 	for _, contractEvent := range contractEvents {
-		if sacEvent, err := contractevents.NewStellarAssetContractEvent(&contractEvent, operation.network); err == nil {
+		if sacEvent, err := contractevents.NewStellarAssetContractEvent(&contractEvent, network); err == nil {
 			// 'to' and 'from' fields in the events can be either a Contract address or an Account address. We're
 			// only interested in account addresses and will skip Contract addresses.
 			switch sacEvent.GetType() {
