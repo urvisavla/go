@@ -1051,68 +1051,25 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 			return participants, err
 		} else {
 			for _, change := range changes {
-				if change.Type == xdr.LedgerEntryTypeAccount || change.Type == xdr.LedgerEntryTypeTrustline {
-					var data xdr.LedgerEntryData
-					switch {
-					case change.Post != nil:
-						data = change.Post.Data
-					case change.Pre != nil:
-						data = change.Pre.Data
-					default:
-						log.Errorf("Change Type %s with no pre or post", change.Type.String())
-						continue
-					}
-
-					switch change.Type {
-					case xdr.LedgerEntryTypeAccount:
-						participants = append(participants, data.MustAccount().AccountId)
-					case xdr.LedgerEntryTypeTrustline:
-						participants = append(participants, data.MustTrustLine().AccountId)
-					}
+				var data xdr.LedgerEntryData
+				switch {
+				case change.Post != nil:
+					data = change.Post.Data
+				case change.Pre != nil:
+					data = change.Pre.Data
+				default:
+					log.Errorf("Change Type %s with no pre or post", change.Type.String())
+					continue
+				}
+				if ledgerKey, err := data.LedgerKey(); err == nil {
+					participants = append(participants, getLedgerKeyParticipants(ledgerKey)...)
 				}
 			}
 		}
-
 		if diagnosticEvents, err := operation.transaction.GetDiagnosticEvents(); err != nil {
 			return participants, err
 		} else {
-			for _, contractEvent := range filterEvents(diagnosticEvents) {
-				var sacEvent contractevents.StellarAssetContractEvent
-				if sacEvent, err = contractevents.NewStellarAssetContractEvent(&contractEvent, operation.network); err == nil {
-					// 'to' and 'from' fields in the events can be either a Contract address or an Account address. We're
-					// only interested in account addresses and will skip Contract addresses.
-					switch sacEvent.GetType() {
-					case contractevents.EventTypeTransfer:
-						var transferEvt *contractevents.TransferEvent
-						transferEvt = sacEvent.(*contractevents.TransferEvent)
-						var from, to xdr.AccountId
-						if from, err = xdr.AddressToAccountId(transferEvt.From); err == nil {
-							participants = append(participants, from)
-						}
-						if to, err = xdr.AddressToAccountId(transferEvt.To); err == nil {
-							participants = append(participants, to)
-						}
-					case contractevents.EventTypeMint:
-						mintEvt := sacEvent.(*contractevents.MintEvent)
-						var to xdr.AccountId
-						if to, err = xdr.AddressToAccountId(mintEvt.To); err == nil {
-							participants = append(participants, to)
-						}
-					case contractevents.EventTypeClawback:
-						clawbackEvt := sacEvent.(*contractevents.ClawbackEvent)
-						var from xdr.AccountId
-						if from, err = xdr.AddressToAccountId(clawbackEvt.From); err == nil {
-							participants = append(participants, from)
-						}
-					case contractevents.EventTypeBurn:
-						burnEvt := sacEvent.(*contractevents.BurnEvent)
-						var from xdr.AccountId
-						if from, err = xdr.AddressToAccountId(burnEvt.From); err == nil {
-							participants = append(participants, from)
-						}
-					}
-				}
-			}
+			participants = append(participants, operation.getParticipantsFromSACEvents(filterEvents(diagnosticEvents))...)
 		}
 
 	case xdr.OperationTypeExtendFootprintTtl:
@@ -1132,6 +1089,48 @@ func (operation *transactionOperationWrapper) Participants() ([]xdr.AccountId, e
 	}
 
 	return dedupeParticipants(participants), nil
+}
+
+func (operation *transactionOperationWrapper) getParticipantsFromSACEvents(contractEvents []xdr.ContractEvent) []xdr.AccountId {
+	var participants []xdr.AccountId
+
+	for _, contractEvent := range contractEvents {
+		if sacEvent, err := contractevents.NewStellarAssetContractEvent(&contractEvent, operation.network); err == nil {
+			// 'to' and 'from' fields in the events can be either a Contract address or an Account address. We're
+			// only interested in account addresses and will skip Contract addresses.
+			switch sacEvent.GetType() {
+			case contractevents.EventTypeTransfer:
+				var transferEvt *contractevents.TransferEvent
+				transferEvt = sacEvent.(*contractevents.TransferEvent)
+				var from, to xdr.AccountId
+				if from, err = xdr.AddressToAccountId(transferEvt.From); err == nil {
+					participants = append(participants, from)
+				}
+				if to, err = xdr.AddressToAccountId(transferEvt.To); err == nil {
+					participants = append(participants, to)
+				}
+			case contractevents.EventTypeMint:
+				mintEvt := sacEvent.(*contractevents.MintEvent)
+				var to xdr.AccountId
+				if to, err = xdr.AddressToAccountId(mintEvt.To); err == nil {
+					participants = append(participants, to)
+				}
+			case contractevents.EventTypeClawback:
+				clawbackEvt := sacEvent.(*contractevents.ClawbackEvent)
+				var from xdr.AccountId
+				if from, err = xdr.AddressToAccountId(clawbackEvt.From); err == nil {
+					participants = append(participants, from)
+				}
+			case contractevents.EventTypeBurn:
+				burnEvt := sacEvent.(*contractevents.BurnEvent)
+				var from xdr.AccountId
+				if from, err = xdr.AddressToAccountId(burnEvt.From); err == nil {
+					participants = append(participants, from)
+				}
+			}
+		}
+	}
+	return participants
 }
 
 // dedupeParticipants remove any duplicate ids from `in`
