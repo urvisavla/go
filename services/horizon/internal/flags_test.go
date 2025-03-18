@@ -335,7 +335,6 @@ func horizonEnvVars() map[string]string {
 		"PORT":                     "8001",
 		"CAPTIVE_CORE_BINARY_PATH": os.Getenv("HORIZON_INTEGRATION_TESTS_CAPTIVE_CORE_BIN"),
 		"CAPTIVE_CORE_CONFIG_PATH": "../docker/captive-core-integration-tests.cfg",
-		"CAPTIVE_CORE_USE_DB":      "true",
 	}
 }
 
