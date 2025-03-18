@@ -660,14 +660,12 @@ func (i *Test) CreateCaptiveCoreConfig() (ledgerbackend.CaptiveCoreConfig, error
 		HistoryArchiveURLs:  []string{HistoryArchiveUrl},
 		NetworkPassphrase:   i.config.NetworkPassphrase,
 		CheckpointFrequency: CheckpointFrequency, // This is required for accelerated archive creation for integration test
-		UseDB:               true,
 		StoragePath:         i.CurrentTest().TempDir(),
 	}
 
 	tomlParams := ledgerbackend.CaptiveCoreTomlParams{
 		NetworkPassphrase:  i.config.NetworkPassphrase,
 		HistoryArchiveURLs: []string{HistoryArchiveUrl},
-		UseDB:              true,
 	}
 
 	toml, err := ledgerbackend.NewCaptiveCoreTomlFromFile(i.coreConfig.configPath, tomlParams)
