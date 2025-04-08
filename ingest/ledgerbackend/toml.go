@@ -108,6 +108,10 @@ type captiveCoreTomlValues struct {
 	HTTPQueryPort                         *uint                `toml:"HTTP_QUERY_PORT,omitempty"`
 	QueryThreadPoolSize                   *uint                `toml:"QUERY_THREAD_POOL_SIZE,omitempty"`
 	QuerySnapshotLedgers                  *uint                `toml:"QUERY_SNAPSHOT_LEDGERS,omitempty"`
+	OverrideEvictionParamsForTesting      bool                 `toml:"OVERRIDE_EVICTION_PARAMS_FOR_TESTING, omitempty""`
+	TestingStartingEvictionScanLevel      *uint                `toml:"TESTING_STARTING_EVICTION_SCAN_LEVEL, omitempty"`
+	TestingEvictionScanSize               *uint64              `toml:"TESTING_EVICTION_SCAN_SIZE, omitempty"`
+	TestingMaxEntriesToArchive            *uint                `toml:"TESTING_MAX_ENTRIES_TO_ARCHIVE, omitempty"`
 }
 
 // QuorumSetIsConfigured returns true if there is a quorum set defined in the configuration.
