@@ -58,6 +58,7 @@ func NewS3DataStore(ctx context.Context, datastoreConfig DataStoreConfig) (DataS
 		// If not, fall back to anonymous credentials for public S3 bucket access.
 		_, err := cfg.Credentials.Retrieve(ctx)
 		if err != nil {
+			log.Infof("No default AWS credentials found, configuring S3 client for anonymous access")
 			o.Credentials = aws.AnonymousCredentials{}
 		}
 
