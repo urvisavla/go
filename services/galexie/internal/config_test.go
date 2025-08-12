@@ -30,6 +30,7 @@ func TestNewConfig(t *testing.T) {
 	require.Equal(t, config.DataStoreConfig.Type, "ABC")
 	require.Equal(t, config.DataStoreConfig.Schema.FilesPerPartition, uint32(1))
 	require.Equal(t, config.DataStoreConfig.Schema.LedgersPerFile, uint32(3))
+	require.Equal(t, config.DataStoreConfig.Schema.FileExtension, "xyz")
 	require.Equal(t, config.UserAgent, "galexie")
 	require.True(t, config.Resumable())
 	url, ok := config.DataStoreConfig.Params["destination_bucket_path"]

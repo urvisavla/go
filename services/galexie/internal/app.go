@@ -116,8 +116,13 @@ func (a *App) init(ctx context.Context, runtimeSettings RuntimeSettings) error {
 	}
 
 	if a.dataStore, err = datastore.NewDataStore(ctx, a.config.DataStoreConfig); err != nil {
-		return errors.Wrap(err, "Could not connect to destination data store")
+		return fmt.Errorf("could not connect to destination data store %w", err)
 	}
+
+	if err = a.configureDatastore(ctx, a.config.DataStoreConfig); err != nil {
+		return fmt.Errorf("could not configure datastore %w", err)
+	}
+
 	if a.config.Resumable() {
 		if err = a.applyResumability(ctx,
 			datastore.NewResumableManager(a.dataStore, a.config.DataStoreConfig.Schema, archive)); err != nil {
@@ -125,7 +130,8 @@ func (a *App) init(ctx context.Context, runtimeSettings RuntimeSettings) error {
 		}
 	}
 
-	logger.Infof("Final computed ledger range for backend retrieval and export, start=%d, end=%d", a.config.StartLedger, a.config.EndLedger)
+	logger.Infof("Final computed ledger range for backend retrieval and export, start=%d, end=%d",
+		a.config.StartLedger, a.config.EndLedger)
 
 	if a.ledgerBackend, err = newLedgerBackend(a.config, registry); err != nil {
 		return err
@@ -184,6 +190,22 @@ func newAdminServer(adminPort int, prometheusRegistry *prometheus.Registry) *htt
 		Handler:     mux,
 		ReadTimeout: adminServerReadTimeout,
 	}
+}
+
+func (a *App) configureDatastore(ctx context.Context, cfg datastore.DataStoreConfig) error {
+	logger.Infof("Attempting to configure datastore...")
+	manifest, created, err := datastore.PublishConfig(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	if created {
+		logger.WithField("manifest", manifest).Infof("Successfully created datastore config manifest.")
+	} else {
+		logger.WithField("manifest", manifest).Infof("Datastore config manifest already exists.")
+	}
+
+	return nil
 }
 
 func (a *App) Run(runtimeSettings RuntimeSettings) error {

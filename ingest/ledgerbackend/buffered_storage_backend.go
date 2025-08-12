@@ -5,6 +5,7 @@ package ledgerbackend
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -35,6 +36,7 @@ type BufferedStorageBackend struct {
 	ledgerBuffer *ledgerBuffer
 
 	dataStore  datastore.DataStore
+	schema     datastore.DataStoreSchema
 	prepared   *Range // Non-nil if any range is prepared
 	closed     bool   // False until the core is closed
 	lcmBatch   xdr.LedgerCloseMetaBatch
@@ -52,13 +54,19 @@ func NewBufferedStorageBackend(config BufferedStorageBackendConfig, dataStore da
 		return nil, errors.New("number of workers must be <= BufferSize")
 	}
 
-	if dataStore.GetSchema().LedgersPerFile <= 0 {
+	schema, err := datastore.LoadSchema(context.Background(), dataStore)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve datastore schema: %w", err)
+	}
+
+	if schema.LedgersPerFile <= 0 {
 		return nil, errors.New("ledgersPerFile must be > 0")
 	}
 
 	bsBackend := &BufferedStorageBackend{
 		config:    config,
 		dataStore: dataStore,
+		schema:    schema,
 	}
 
 	return bsBackend, nil
