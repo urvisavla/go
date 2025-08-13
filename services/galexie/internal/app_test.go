@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 
+	"github.com/stellar/go/support/compressxdr"
 	"github.com/stellar/go/support/datastore"
 )
 
@@ -132,20 +133,20 @@ func TestValidateExistingFileExtension(t *testing.T) {
 			expectedErr: nil,
 		},
 		{
-			name:        "no files, no error",
+			name:        "only manifest, no error",
 			files:       []string{".config.json"},
 			expectedErr: nil,
 		},
 		{
-			name:        "valid file extension, no error",
-			files:       []string{".config.json", "ledger/2025-08-01-0001.zst"},
+			name:        "valid schema filename with default extension, no error",
+			files:       []string{".config.json", "ledger/FFFFFFFF--0.xdr." + compressxdr.DefaultCompressor.Name()},
 			expectedErr: nil,
 		},
 		{
-			name:  "invalid file extension, returns an error",
-			files: []string{".config.json", "ledger/2025-08-01-0001.zstddd"},
+			name:  "valid schema filename with non-default extension returns error",
+			files: []string{".config.json", "ledger/FFFFFFFE--0-999.xdr.zstd"},
 			expectedErr: fmt.Errorf("detected older incompatible ledger files in the data store (extension %q). "+
-				"Galexie v23.0+ requires starting with an empty datastore", "zstddd"),
+				"Galexie v23.0+ requires starting with an empty datastore", "zstd"),
 		},
 		{
 			name:        "underlying GetLedgerFileExtension error, returns wrapped error",
