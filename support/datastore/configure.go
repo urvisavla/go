@@ -71,8 +71,8 @@ type ConfigMismatchError struct {
 }
 
 func (e *ConfigMismatchError) Error() string {
-	return fmt.Sprintf("\"The local config does not match the manifest "+
-		"stored in the datastore\".\nMismatch details: %s", strings.Join(e.Diffs, "; "))
+	return fmt.Sprintf("The local config does not match the manifest "+
+		"stored in the datastore. Details: %s", strings.Join(e.Diffs, "; "))
 }
 
 func compareManifests(expected, actual DatastoreManifest) error {
@@ -146,6 +146,10 @@ func LoadSchema(ctx context.Context, dataStore DataStore, cfg DataStoreConfig) (
 	manifest, err := readManifest(ctx, dataStore, manifestFilename)
 	if err != nil {
 		// If the manifest is missing, fall back to using cfg values
+		if cfg.Schema.LedgersPerFile == 0 || cfg.Schema.FilesPerPartition == 0 {
+			return DataStoreSchema{}, errors.New("datastore manifest is missing and local config is incomplete; ledgersPerFile and filesPerPartition must be set")
+		}
+
 		if errors.Is(err, os.ErrNotExist) {
 			return DataStoreSchema{
 				LedgersPerFile:    cfg.Schema.LedgersPerFile,

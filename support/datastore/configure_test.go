@@ -115,31 +115,37 @@ func TestCompareManifests(t *testing.T) {
 			name:     "network passphrase mismatch",
 			expected: base,
 			actual:   with(base, func(m *DatastoreManifest) { m.NetworkPassphrase = "wrong" }),
-			wantErr:  `local="test-passphrase", datastore="wrong"`,
+			wantErr:  "The local config does not match the manifest stored in the datastore. Details: networkPassphrase: local=\"test-passphrase\", datastore=\"wrong\"",
 		},
 		{
 			name:     "version mismatch",
 			expected: base,
 			actual:   with(base, func(m *DatastoreManifest) { m.Version = "2.0" }),
-			wantErr:  `local="1.0", datastore="2.0"`,
+			wantErr:  "The local config does not match the manifest stored in the datastore. Details: version: local=\"1.0\", datastore=\"2.0\"",
 		},
 		{
 			name:     "compression mismatch",
 			expected: base,
 			actual:   with(base, func(m *DatastoreManifest) { m.Compression = "gzip" }),
-			wantErr:  `local="zstd", datastore="gzip"`,
+			wantErr:  "The local config does not match the manifest stored in the datastore. Details: compression: local=\"zstd\", datastore=\"gzip\"",
 		},
 		{
 			name:     "ledgersPerFile mismatch",
 			expected: base,
 			actual:   with(base, func(m *DatastoreManifest) { m.LedgersPerFile = 500 }),
-			wantErr:  `local=1000, datastore=500`,
+			wantErr:  "The local config does not match the manifest stored in the datastore. Details: ledgersPerFile: local=1000, datastore=500",
 		},
 		{
 			name:     "filesPerPartition mismatch",
 			expected: base,
 			actual:   with(base, func(m *DatastoreManifest) { m.FilesPerPartition = 5 }),
-			wantErr:  `local=10, datastore=5`,
+			wantErr:  "The local config does not match the manifest stored in the datastore. Details: filesPerPartition: local=10, datastore=5",
+		},
+		{
+			name:     "multiple mismatches",
+			expected: base,
+			actual:   with(base, func(m *DatastoreManifest) { m.Version = "2.0"; m.Compression = "gzip" }),
+			wantErr:  "The local config does not match the manifest stored in the datastore. Details: version: local=\"1.0\", datastore=\"2.0\"; compression: local=\"zstd\", datastore=\"gzip\"",
 		},
 		{
 			name:     "empty expected manifest",
@@ -155,7 +161,7 @@ func TestCompareManifests(t *testing.T) {
 			if tt.wantErr == "" {
 				require.NoError(t, err)
 			} else {
-				require.Contains(t, err.Error(), tt.wantErr)
+				require.EqualError(t, err, tt.wantErr)
 			}
 		})
 	}
@@ -222,7 +228,6 @@ func TestLoadSchema(t *testing.T) {
 		mockOS.AssertExpectations(t)
 	})
 
-	// Manifest found but config is different (validation fails)
 	t.Run("Manifest found but validation fails", func(t *testing.T) {
 		mockOS := new(MockDataStore)
 		invalidManifestBytes, err := json.Marshal(DatastoreManifest{
@@ -237,6 +242,18 @@ func TestLoadSchema(t *testing.T) {
 		schema, err := LoadSchema(ctx, mockOS, defaultCfg)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "datastore config mismatch")
+		require.EqualValues(t, DataStoreSchema{}, schema)
+		mockOS.AssertExpectations(t)
+	})
+
+	t.Run("Manifest not found, and incomplete config", func(t *testing.T) {
+		mockOS := new(MockDataStore)
+		mockOS.On("GetFile", ctx, manifestFilename).Return(nil, os.ErrNotExist).Once()
+		mockOS.On("ListFilePaths", ctx, "", 2).Return(nil, nil)
+
+		schema, err := LoadSchema(ctx, mockOS, DataStoreConfig{})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "datastore manifest is missing and local config is incomplete; ledgersPerFile and filesPerPartition must be set")
 		require.EqualValues(t, DataStoreSchema{}, schema)
 		mockOS.AssertExpectations(t)
 	})
