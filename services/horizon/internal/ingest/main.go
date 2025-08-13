@@ -306,7 +306,8 @@ func NewSystem(config Config) (System, error) {
 			return nil, fmt.Errorf("failed to create datastore: %w", err)
 		}
 
-		schema, err := datastore.LoadSchema(context.Background(), dataStore, config.StorageBackendConfig.DataStoreConfig)
+		var schema datastore.DataStoreSchema
+		schema, err = datastore.LoadSchema(context.Background(), dataStore, config.StorageBackendConfig.DataStoreConfig)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("failed to retrieve datastore schema: %w", err)
