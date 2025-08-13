@@ -7,10 +7,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/pkg/errors"
 )
+
+// ledgerFilenameRe is the regular expression that matches filenames produced by
+// DataStoreSchema.GetObjectKeyFromSequenceNumber (base name only).
+// Examples:
+//
+//	FFFFFFFF--0.xdr.zstd
+//	FFFFFFFE--0-999.xdr.zst
+var ledgerFilenameRe = regexp.MustCompile(`^[0-9A-F]{8}--[0-9]+(?:-[0-9]+)?\.xdr\.[A-Za-z0-9._-]+$`)
 
 // DatastoreManifest represents the persisted configuration stored in the object store.
 type DatastoreManifest struct {
@@ -183,12 +192,16 @@ func GetLedgerFileExtension(ctx context.Context, dataStore DataStore) (string, e
 		return "", fmt.Errorf("failed to list ledger files: %w", err)
 	}
 
-	// Find the first ledger file and extract its extension
+	// Note: The file may be inside a partition directory; we only check the base name here.
 	for _, file := range files {
 		base := filepath.Base(file)
-		if base != manifestFilename {
-			ext := filepath.Ext(base)
-			return strings.TrimPrefix(ext, "."), nil
+		if ledgerFilenameRe.MatchString(base) {
+			// Extract the extension after the last dot using filepath.Ext
+			// e.g., "...xdr.zst" -> ".zst" -> "zst"
+			ext := strings.TrimPrefix(filepath.Ext(base), ".")
+			if ext != "" {
+				return ext, nil
+			}
 		}
 	}
 

@@ -270,20 +270,20 @@ func TestGetLedgerFileExtension(t *testing.T) {
 
 	cases := []tc{
 		{
-			name:        "returns zst when first non-manifest is .zst",
-			files:       []string{".config.json", "ledger/2025-08-01-0001.zst"},
+			name:        "returns zst when first matching schema file is .xdr.zst",
+			files:       []string{".config.json", "misc/ignore.txt", "ledger/FFFFFFFF--0.xdr.zst"},
 			ExpectedExt: "zst",
 			ExpectedErr: nil,
 		},
 		{
-			name:        "returns zstd when first non-manifest is .zstd",
-			files:       []string{".config.json", "ledger/2025-08-01-0001.zstd"},
+			name:        "returns zstd when first matching schema file is .xdr.zstd",
+			files:       []string{".config.json", "something.bin", "ledger/FFFFFFFE--0-999.xdr.zstd"},
 			ExpectedExt: "zstd",
 			ExpectedErr: nil,
 		},
 		{
-			name:        "ignores manifest and returns ErrNoLedgerFiles",
-			files:       []string{".config.json"},
+			name:        "ignores manifest and non-matching files and returns ErrNoLedgerFiles",
+			files:       []string{".config.json", "random/2025-08-01-0001.zst", "ABCDEF--bad.xdr.gz"},
 			ExpectedExt: "",
 			ExpectedErr: ErrNoLedgerFiles,
 		},
@@ -301,8 +301,8 @@ func TestGetLedgerFileExtension(t *testing.T) {
 			ExpectedErr: fmt.Errorf("failed to list ledger files: boom"),
 		},
 		{
-			name:        "works with nested paths",
-			files:       []string{"a/b/c/thing.zst"},
+			name:        "works with nested paths including partition dir",
+			files:       []string{"part/DEADBEEF--0-999/DEADBEEF--0-999.xdr.zst"},
 			ExpectedExt: "zst",
 			ExpectedErr: nil,
 		},
