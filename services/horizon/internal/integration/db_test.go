@@ -578,6 +578,40 @@ func TestReingestDatastore(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestReingestDatastoreWithZstdFiles(t *testing.T) {
+	test := integration.NewTest(t, integration.Config{
+		SkipHorizonStart:          true,
+		SkipCoreContainerCreation: true,
+	})
+	err := test.StartHorizon(false)
+	assert.NoError(t, err)
+	test.WaitForHorizonWeb()
+
+	testTempDir := t.TempDir()
+	fakeBucketFilesSource := "testdata/testbucket_zstd"
+	fakeBucketFiles := loadTestBucketObjects(t, fakeBucketFilesSource, "to/my/bucket/", false)
+
+	gcsServer := startFakeGCSServer(t, testTempDir, fakeBucketFiles)
+	defer gcsServer.Stop()
+
+	rootCmd := horizoncmd.NewRootCmd()
+	rootCmd.SetArgs([]string{"db",
+		"reingest",
+		"range",
+		"--db-url", test.GetTestDB().DSN,
+		"--network", "testnet",
+		"--parallel-workers", "1",
+		"--ledgerbackend", "datastore",
+		"--datastore-config", "../ingest/testdata/config.storagebackend.toml",
+		"997",
+		"999"})
+
+	require.NoError(t, rootCmd.Execute())
+
+	_, err = test.Client().LedgerDetail(998)
+	require.NoError(t, err)
+}
+
 func TestReingestDatastoreConfigManifest(t *testing.T) {
 	test := integration.NewTest(t, integration.Config{
 		SkipHorizonStart:          true,

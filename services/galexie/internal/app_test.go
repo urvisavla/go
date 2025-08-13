@@ -2,11 +2,13 @@ package galexie
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pkg/errors"
-	"github.com/stellar/go/support/datastore"
 	"github.com/stretchr/testify/require"
+
+	"github.com/stellar/go/support/datastore"
 )
 
 func TestApplyResumeHasStartError(t *testing.T) {
@@ -112,4 +114,59 @@ func TestApplyResumeWithNoRemoteDataAndRequestFromGenesis(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, app.config.StartLedger, uint32(2))
 	mockResumableManager.AssertExpectations(t)
+}
+
+func TestValidateExistingFileExtension(t *testing.T) {
+	var someOtherError = errors.New("a different error")
+
+	testCases := []struct {
+		name         string
+		getExtReturn string
+		files        []string
+		getExtError  error
+		expectedErr  error
+	}{
+		{
+			name:        "no files, no error",
+			files:       []string{},
+			expectedErr: nil,
+		},
+		{
+			name:        "no files, no error",
+			files:       []string{".config.json"},
+			expectedErr: nil,
+		},
+		{
+			name:        "valid file extension, no error",
+			files:       []string{".config.json", "ledger/2025-08-01-0001.zst"},
+			expectedErr: nil,
+		},
+		{
+			name:  "invalid file extension, returns an error",
+			files: []string{".config.json", "ledger/2025-08-01-0001.zstddd"},
+			expectedErr: fmt.Errorf("detected older incompatible ledger files in the data store (extension %q). "+
+				"Galexie v23.0+ requires starting with an empty datastore", "zstddd"),
+		},
+		{
+			name:        "underlying GetLedgerFileExtension error, returns wrapped error",
+			getExtError: someOtherError,
+			expectedErr: fmt.Errorf("unable to determine ledger file extension from data store: failed to list ledger files: %w", someOtherError),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := new(datastore.MockDataStore)
+			ds.On("ListFilePaths", context.Background(), "", 2).Return(tc.files, tc.getExtError)
+
+			actualErr := validateExistingFileExtension(context.Background(), ds)
+
+			if tc.expectedErr != nil {
+				require.ErrorContains(t, actualErr, tc.expectedErr.Error())
+			} else {
+				require.NoError(t, actualErr)
+			}
+			ds.AssertExpectations(t)
+		})
+	}
 }
