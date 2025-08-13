@@ -2,6 +2,6 @@
   "networkPassphrase": "Test SDF Network ; September 2015",
   "version": "1.0",
   "compression": "zstd",
-  "ledgersPerFile": 1,
+  "ledgersPerBatch": 1,
   "batchesPerPartition": 64000
 }

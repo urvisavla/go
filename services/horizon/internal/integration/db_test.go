@@ -578,6 +578,40 @@ func TestReingestDatastore(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestReingestDatastoreConfigManifest(t *testing.T) {
+	test := integration.NewTest(t, integration.Config{
+		SkipHorizonStart:          true,
+		SkipCoreContainerCreation: true,
+	})
+	err := test.StartHorizon(false)
+	assert.NoError(t, err)
+	test.WaitForHorizonWeb()
+
+	testTempDir := t.TempDir()
+	fakeBucketFilesSource := "testdata/testbucket"
+	fakeBucketFiles := loadTestBucketObjects(t, fakeBucketFilesSource, "to/my/bucket/", true)
+
+	gcsServer := startFakeGCSServer(t, testTempDir, fakeBucketFiles)
+	defer gcsServer.Stop()
+
+	rootCmd := horizoncmd.NewRootCmd()
+	rootCmd.SetArgs([]string{"db",
+		"reingest",
+		"range",
+		"--db-url", test.GetTestDB().DSN,
+		"--network", "testnet",
+		"--parallel-workers", "1",
+		"--ledgerbackend", "datastore",
+		"--datastore-config", "../ingest/testdata/config.storagebackend.toml.manifest",
+		"997",
+		"999"})
+
+	require.NoError(t, rootCmd.Execute())
+
+	_, err = test.Client().LedgerDetail(998)
+	require.NoError(t, err)
+}
+
 func startFakeGCSServer(t *testing.T, tempDir string, initialObjects []fakestorage.Object) *fakestorage.Server {
 	testWriter := &testWriter{test: t}
 	server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
@@ -595,7 +629,7 @@ func startFakeGCSServer(t *testing.T, tempDir string, initialObjects []fakestora
 	return server
 }
 
-func loadTestBucketObjects(t *testing.T, srcDir, bucketPrefix string, includeConfig bool) []fakestorage.Object {
+func loadTestBucketObjects(t *testing.T, srcDir, bucketPrefix string, includeConfigManifest bool) []fakestorage.Object {
 	var objects []fakestorage.Object
 
 	err := filepath.WalkDir(srcDir, func(path string, entry fs.DirEntry, err error) error {
@@ -603,7 +637,7 @@ func loadTestBucketObjects(t *testing.T, srcDir, bucketPrefix string, includeCon
 			return err
 		}
 		if entry.Type().IsRegular() {
-			if entry.Name() == ".config.json" && !includeConfig {
+			if entry.Name() == ".config.json" && !includeConfigManifest {
 				return nil
 			}
 
