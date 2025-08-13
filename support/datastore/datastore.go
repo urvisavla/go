@@ -31,7 +31,6 @@ type DataStore interface {
 	Exists(ctx context.Context, path string) (bool, error)
 	Size(ctx context.Context, path string) (int64, error)
 	ListFilePaths(ctx context.Context, prefix string, limit int) ([]string, error)
-	GetSchema() DataStoreSchema
 	Close() error
 }
 

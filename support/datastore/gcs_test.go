@@ -396,7 +396,7 @@ func TestGCSListFilePaths(t *testing.T) {
 	})
 	defer server.Stop()
 
-	store, err := FromGCSClient(context.Background(), server.Client(), "test-bucket/objects/testnet", DataStoreSchema{})
+	store, err := FromGCSClient(context.Background(), server.Client(), "test-bucket/objects/testnet")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
@@ -423,7 +423,7 @@ func TestGCSListFilePaths_WithPrefix(t *testing.T) {
 	})
 	defer server.Stop()
 
-	store, err := FromGCSClient(context.Background(), server.Client(), "test-bucket/objects/testnet", DataStoreSchema{})
+	store, err := FromGCSClient(context.Background(), server.Client(), "test-bucket/objects/testnet")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
@@ -443,7 +443,7 @@ func TestGCSListFilePaths_LimitDefaultAndCap(t *testing.T) {
 	server := fakestorage.NewServer(objects)
 	defer server.Stop()
 
-	store, err := FromGCSClient(context.Background(), server.Client(), "test-bucket/objects/testnet", DataStoreSchema{})
+	store, err := FromGCSClient(context.Background(), server.Client(), "test-bucket/objects/testnet")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 

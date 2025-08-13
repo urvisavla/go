@@ -578,40 +578,6 @@ func TestReingestDatastore(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestReingestDatastoreWithConfigManifest(t *testing.T) {
-	test := integration.NewTest(t, integration.Config{
-		SkipHorizonStart:          true,
-		SkipCoreContainerCreation: true,
-	})
-	err := test.StartHorizon(false)
-	assert.NoError(t, err)
-	test.WaitForHorizonWeb()
-
-	testTempDir := t.TempDir()
-	fakeBucketFilesSource := "testdata/testbucket"
-	fakeBucketFiles := loadTestBucketObjects(t, fakeBucketFilesSource, "to/my/bucket/", true)
-
-	gcsServer := startFakeGCSServer(t, testTempDir, fakeBucketFiles)
-	defer gcsServer.Stop()
-
-	rootCmd := horizoncmd.NewRootCmd()
-	rootCmd.SetArgs([]string{"db",
-		"reingest",
-		"range",
-		"--db-url", test.GetTestDB().DSN,
-		"--network", "testnet",
-		"--parallel-workers", "1",
-		"--ledgerbackend", "datastore",
-		"--datastore-config", "../ingest/testdata/config.storagebackend.toml.manifest",
-		"997",
-		"999"})
-
-	require.NoError(t, rootCmd.Execute())
-
-	_, err = test.Client().LedgerDetail(998)
-	require.NoError(t, err)
-}
-
 func startFakeGCSServer(t *testing.T, tempDir string, initialObjects []fakestorage.Object) *fakestorage.Server {
 	testWriter := &testWriter{test: t}
 	server, err := fakestorage.NewServerWithOptions(fakestorage.Options{

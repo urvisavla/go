@@ -5,7 +5,6 @@ package ledgerbackend
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -45,18 +44,13 @@ type BufferedStorageBackend struct {
 }
 
 // NewBufferedStorageBackend returns a new BufferedStorageBackend instance.
-func NewBufferedStorageBackend(config BufferedStorageBackendConfig, dataStore datastore.DataStore) (*BufferedStorageBackend, error) {
+func NewBufferedStorageBackend(config BufferedStorageBackendConfig, dataStore datastore.DataStore, schema datastore.DataStoreSchema) (*BufferedStorageBackend, error) {
 	if config.BufferSize == 0 {
 		return nil, errors.New("buffer size must be > 0")
 	}
 
 	if config.NumWorkers > config.BufferSize {
 		return nil, errors.New("number of workers must be <= BufferSize")
-	}
-
-	schema, err := datastore.LoadSchema(context.Background(), dataStore)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve datastore schema: %w", err)
 	}
 
 	if schema.LedgersPerFile <= 0 {

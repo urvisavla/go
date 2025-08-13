@@ -5,6 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/pkg/errors"
 )
 
 // DatastoreManifest represents the persisted configuration stored in the object store.
@@ -12,7 +17,7 @@ type DatastoreManifest struct {
 	NetworkPassphrase string `json:"networkPassphrase"`
 	Version           string `json:"version"`
 	Compression       string `json:"compression"`
-	LedgersPerFile    uint32 `json:"ledgersPerFile"`
+	LedgersPerFile    uint32 `json:"ledgersPerBatch"`
 	FilesPerPartition uint32 `json:"batchesPerPartition"`
 }
 
@@ -25,26 +30,6 @@ func toDataStoreManifest(cfg DataStoreConfig) DatastoreManifest {
 		LedgersPerFile:    cfg.Schema.LedgersPerFile,
 		FilesPerPartition: cfg.Schema.FilesPerPartition,
 	}
-}
-
-// compareManifests validates the equality of the expected and actual manifest values.
-func compareManifests(expected, actual DatastoreManifest) error {
-	if expected.NetworkPassphrase != "" && expected.NetworkPassphrase != actual.NetworkPassphrase {
-		return fmt.Errorf("expected networkPassphrase=%q but found %q", expected.NetworkPassphrase, actual.NetworkPassphrase)
-	}
-	if expected.Version != "" && expected.Version != actual.Version {
-		return fmt.Errorf("expected version=%q but found %q", expected.Version, actual.Version)
-	}
-	if expected.Compression != "" && expected.Compression != actual.Compression {
-		return fmt.Errorf("expected compression=%q but found %q", expected.Compression, actual.Compression)
-	}
-	if expected.LedgersPerFile != 0 && expected.LedgersPerFile != actual.LedgersPerFile {
-		return fmt.Errorf("expected ledgersPerFile=%d but found %d", expected.LedgersPerFile, actual.LedgersPerFile)
-	}
-	if expected.FilesPerPartition != 0 && expected.FilesPerPartition != actual.FilesPerPartition {
-		return fmt.Errorf("expected filesPerPartition=%d but found %d", expected.FilesPerPartition, actual.FilesPerPartition)
-	}
-	return nil
 }
 
 // createManifest writes a new manifest to the datastore if it doesn't already exist.
@@ -81,40 +66,127 @@ func readManifest(ctx context.Context, dataStore DataStore, filename string) (Da
 	return manifest, nil
 }
 
+type ConfigMismatchError struct {
+	Diffs []string
+}
+
+func (e *ConfigMismatchError) Error() string {
+	return fmt.Sprintf("\"The local config does not match the manifest "+
+		"stored in the datastore\".\nMismatch details: %s", strings.Join(e.Diffs, "; "))
+}
+
+func compareManifests(expected, actual DatastoreManifest) error {
+	var diffs []string
+
+	if expected.NetworkPassphrase != "" && expected.NetworkPassphrase != actual.NetworkPassphrase {
+		diffs = append(diffs, fmt.Sprintf("networkPassphrase: local=%q, datastore=%q",
+			expected.NetworkPassphrase, actual.NetworkPassphrase))
+	}
+	if expected.Version != "" && expected.Version != actual.Version {
+		diffs = append(diffs, fmt.Sprintf("version: local=%q, datastore=%q",
+			expected.Version, actual.Version))
+	}
+
+	if expected.Compression != "" && expected.Compression != actual.Compression {
+		diffs = append(diffs, fmt.Sprintf("compression: local=%q, datastore=%q",
+			expected.Compression, actual.Compression))
+	}
+	if expected.LedgersPerFile != 0 && expected.LedgersPerFile != actual.LedgersPerFile {
+		diffs = append(diffs, fmt.Sprintf("ledgersPerFile: local=%d, datastore=%d",
+			expected.LedgersPerFile, actual.LedgersPerFile))
+	}
+	if expected.FilesPerPartition != 0 && expected.FilesPerPartition != actual.FilesPerPartition {
+		diffs = append(diffs, fmt.Sprintf("filesPerPartition: local=%d, datastore=%d",
+			expected.FilesPerPartition, actual.FilesPerPartition))
+	}
+
+	if len(diffs) != 0 {
+		return &ConfigMismatchError{
+			Diffs: diffs,
+		}
+	}
+
+	return nil
+}
+
 // PublishConfig ensures that a datastore manifest exists and matches the provided configuration.
 // If the manifest is missing, it creates one. Returns the manifest, whether it was created, and any error encountered.
-func PublishConfig(ctx context.Context, cfg DataStoreConfig) (DatastoreManifest, bool, error) {
-	dataStore, err := NewDataStore(ctx, cfg)
-	if err != nil {
-		return DatastoreManifest{}, false, fmt.Errorf("failed to publish datastore config: %w", err)
-	}
-	defer dataStore.Close()
-
+func PublishConfig(ctx context.Context, dataStore DataStore, cfg DataStoreConfig) (DatastoreManifest, bool, error) {
 	manifest, err := readManifest(ctx, dataStore, manifestFilename)
 	if err == nil {
+		// Validate that the existing manifest matches the provided config
 		if err = compareManifests(toDataStoreManifest(cfg), manifest); err != nil {
-			return manifest, false, fmt.Errorf("datastore config mismatch: %w", err)
+			return manifest, false, fmt.Errorf(
+				"datastore config mismatch: %w. If the difference is in schema settings, "+
+					"either remove the schema section from your local config or update it to match the datastore", err)
 		}
 		return manifest, false, nil
 	}
 
-	createdManifest, created, writeErr := createManifest(ctx, dataStore, cfg)
-	if writeErr != nil {
-		return DatastoreManifest{}, false, writeErr
+	// failed for a reason other than not existing
+	if !errors.Is(err, os.ErrNotExist) {
+		return DatastoreManifest{}, false, fmt.Errorf("failed to read manifest: %w", err)
 	}
+
+	createdManifest, created, err := createManifest(ctx, dataStore, cfg)
+	if err != nil {
+		return DatastoreManifest{}, false, fmt.Errorf("failed to create manifest: %w", err)
+	}
+
 	return createdManifest, created, nil
 }
 
-// LoadSchema reads the datastore manifest from the given DataStore and returns
-// its schema configuration.
-func LoadSchema(ctx context.Context, dataStore DataStore) (DataStoreSchema, error) {
+// LoadSchema reads the datastore manifest from the given DataStore and returns its schema configuration.
+func LoadSchema(ctx context.Context, dataStore DataStore, cfg DataStoreConfig) (DataStoreSchema, error) {
+	fileExt, err := GetLedgerFileExtension(ctx, dataStore)
+	if err != nil && !errors.Is(err, ErrNoLedgerFiles) {
+		return DataStoreSchema{}, fmt.Errorf("unable to determine ledger file extension from data store: %w", err)
+	}
+
 	manifest, err := readManifest(ctx, dataStore, manifestFilename)
 	if err != nil {
-		return DataStoreSchema{}, err
+		// If the manifest is missing, fall back to using cfg values
+		if errors.Is(err, os.ErrNotExist) {
+			return DataStoreSchema{
+				LedgersPerFile:    cfg.Schema.LedgersPerFile,
+				FilesPerPartition: cfg.Schema.FilesPerPartition,
+				FileExtension:     fileExt,
+			}, nil
+		}
+		// return any other error reading manifest
+		return DataStoreSchema{}, fmt.Errorf("failed to read manifest: %w", err)
+	}
+
+	// If manifest exists, validate against cfg
+	if err := compareManifests(toDataStoreManifest(cfg), manifest); err != nil {
+		return DataStoreSchema{}, fmt.Errorf(
+			"datastore config mismatch: %w. If the difference is in schema settings, "+
+				"either remove the schema section from your local config or update it to match the datastore", err)
 	}
 
 	return DataStoreSchema{
 		LedgersPerFile:    manifest.LedgersPerFile,
 		FilesPerPartition: manifest.FilesPerPartition,
+		FileExtension:     fileExt,
 	}, nil
+}
+
+var ErrNoLedgerFiles = errors.New("no ledger files found")
+
+func GetLedgerFileExtension(ctx context.Context, dataStore DataStore) (string, error) {
+	files, err := dataStore.ListFilePaths(ctx, "", 2)
+	if err != nil {
+		return "", fmt.Errorf("failed to list ledger files: %w", err)
+	}
+
+	// Find the first ledger file and extract its extension
+	for _, file := range files {
+		base := filepath.Base(file)
+		if base != manifestFilename {
+			ext := filepath.Ext(base)
+			return strings.TrimPrefix(ext, "."), nil
+		}
+	}
+
+	return "", ErrNoLedgerFiles
 }

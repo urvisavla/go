@@ -18,6 +18,7 @@ import (
 
 	"github.com/stellar/go/historyarchive"
 	"github.com/stellar/go/ingest/ledgerbackend"
+	"github.com/stellar/go/support/compressxdr"
 	"github.com/stellar/go/support/datastore"
 	supporthttp "github.com/stellar/go/support/http"
 	"github.com/stellar/go/support/log"
@@ -119,8 +120,20 @@ func (a *App) init(ctx context.Context, runtimeSettings RuntimeSettings) error {
 		return fmt.Errorf("could not connect to destination data store %w", err)
 	}
 
-	if err = a.configureDatastore(ctx, a.config.DataStoreConfig); err != nil {
+	if err = validateExistingFileExtension(ctx, a.dataStore); err != nil {
+		return err
+	}
+
+	logger.Infof("Attempting to configure datastore...")
+	manifest, created, err := datastore.PublishConfig(ctx, a.dataStore, a.config.DataStoreConfig)
+	if err != nil {
 		return fmt.Errorf("could not configure datastore %w", err)
+	}
+
+	if created {
+		logger.WithField("manifest", manifest).Infof("Successfully created datastore config manifest.")
+	} else {
+		logger.WithField("manifest", manifest).Infof("Datastore config manifest already exists.")
 	}
 
 	if a.config.Resumable() {
@@ -149,6 +162,25 @@ func (a *App) init(ctx context.Context, runtimeSettings RuntimeSettings) error {
 	if a.config.AdminPort != 0 {
 		a.adminServer = newAdminServer(a.config.AdminPort, registry)
 	}
+	return nil
+}
+
+func validateExistingFileExtension(ctx context.Context, ds datastore.DataStore) error {
+	fileExt, err := datastore.GetLedgerFileExtension(ctx, ds)
+	if err != nil {
+		if errors.Is(err, datastore.ErrNoLedgerFiles) {
+			// Empty data lake is OK. will bootstrap with .zst going forward.
+			log.Infof("no existing ledger files found in data store")
+			return nil
+		}
+		return fmt.Errorf("unable to determine ledger file extension from data store: %w", err)
+	}
+
+	if fileExt != compressxdr.DefaultCompressor.Name() {
+		return fmt.Errorf("detected older incompatible ledger files in the data store (extension %q). "+
+			"Galexie v23.0+ requires starting with an empty datastore", fileExt)
+	}
+
 	return nil
 }
 
@@ -190,22 +222,6 @@ func newAdminServer(adminPort int, prometheusRegistry *prometheus.Registry) *htt
 		Handler:     mux,
 		ReadTimeout: adminServerReadTimeout,
 	}
-}
-
-func (a *App) configureDatastore(ctx context.Context, cfg datastore.DataStoreConfig) error {
-	logger.Infof("Attempting to configure datastore...")
-	manifest, created, err := datastore.PublishConfig(ctx, cfg)
-	if err != nil {
-		return err
-	}
-
-	if created {
-		logger.WithField("manifest", manifest).Infof("Successfully created datastore config manifest.")
-	} else {
-		logger.WithField("manifest", manifest).Infof("Datastore config manifest already exists.")
-	}
-
-	return nil
 }
 
 func (a *App) Run(runtimeSettings RuntimeSettings) error {

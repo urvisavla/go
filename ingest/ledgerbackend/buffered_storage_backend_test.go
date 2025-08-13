@@ -3,7 +3,6 @@ package ledgerbackend
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
 
 	"github.com/stellar/go/support/compressxdr"
 	"github.com/stellar/go/support/datastore"
@@ -136,20 +134,11 @@ func createLCMBatchReader(start, end, count uint32) io.ReadCloser {
 func TestNewBufferedStorageBackend(t *testing.T) {
 	config := createBufferedStorageBackendConfigForTesting()
 	mockDataStore := new(datastore.MockDataStore)
-
-	var expectedManifest = datastore.DatastoreManifest{
-		NetworkPassphrase: "passphrase",
-		Version:           "1.0",
-		Compression:       "xyz",
+	bsb, err := NewBufferedStorageBackend(config, mockDataStore, datastore.DataStoreSchema{
 		LedgersPerFile:    1,
-		FilesPerPartition: partitionSize,
-	}
-	configJSON, err := json.Marshal(expectedManifest)
-	require.NoError(t, err)
-	mockDataStore.On("GetFile", mock.Anything, ".config.json").
-		Return(io.NopCloser(bytes.NewReader(configJSON)), nil).Once()
+		FilesPerPartition: 64000,
+	})
 
-	bsb, err := NewBufferedStorageBackend(config, mockDataStore)
 	assert.NoError(t, err)
 	assert.Equal(t, bsb.dataStore, mockDataStore)
 	assert.Equal(t, uint32(1), bsb.schema.LedgersPerFile)

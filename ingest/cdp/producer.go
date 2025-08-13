@@ -98,8 +98,13 @@ func ApplyLedgerMetadata(ledgerRange ledgerbackend.Range,
 		return fmt.Errorf("failed to create datastore: %w", err)
 	}
 
+	schema, err := datastore.LoadSchema(context.Background(), dataStore, publisherConfig.DataStoreConfig)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve datastore schema: %w", err)
+	}
+
 	var ledgerBackend ledgerbackend.LedgerBackend
-	ledgerBackend, err = ledgerbackend.NewBufferedStorageBackend(publisherConfig.BufferedStorageConfig, dataStore)
+	ledgerBackend, err = ledgerbackend.NewBufferedStorageBackend(publisherConfig.BufferedStorageConfig, dataStore, schema)
 	if err != nil {
 		return fmt.Errorf("failed to create buffered storage backend: %w", err)
 	}
