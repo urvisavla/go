@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -144,7 +145,7 @@ func TestCompareManifests(t *testing.T) {
 			name:     "empty expected manifest",
 			expected: DatastoreManifest{},
 			actual:   base,
-			wantErr:  "", // Should not return an error
+			wantErr:  "",
 		},
 	}
 
@@ -239,4 +240,75 @@ func TestLoadSchema(t *testing.T) {
 		require.EqualValues(t, DataStoreSchema{}, schema)
 		mockOS.AssertExpectations(t)
 	})
+}
+
+func TestGetLedgerFileExtension(t *testing.T) {
+	type tc struct {
+		name        string
+		files       []string
+		listErr     error
+		ExpectedExt string
+		ExpectedErr error
+	}
+
+	cases := []tc{
+		{
+			name:        "returns zst when first non-manifest is .zst",
+			files:       []string{".config.json", "ledger/2025-08-01-0001.zst"},
+			ExpectedExt: "zst",
+			ExpectedErr: nil,
+		},
+		{
+			name:        "returns zstd when first non-manifest is .zstd",
+			files:       []string{".config.json", "ledger/2025-08-01-0001.zstd"},
+			ExpectedExt: "zstd",
+			ExpectedErr: nil,
+		},
+		{
+			name:        "ignores manifest and returns ErrNoLedgerFiles",
+			files:       []string{".config.json"},
+			ExpectedExt: "",
+			ExpectedErr: ErrNoLedgerFiles,
+		},
+		{
+			name:        "no files returns ErrNoLedgerFiles",
+			files:       []string{},
+			ExpectedExt: "",
+			ExpectedErr: ErrNoLedgerFiles,
+		},
+		{
+			name:        "propagates underlying list error",
+			files:       []string{},
+			listErr:     fmt.Errorf("boom"),
+			ExpectedExt: "",
+			ExpectedErr: fmt.Errorf("failed to list ledger files: boom"),
+		},
+		{
+			name:        "works with nested paths",
+			files:       []string{"a/b/c/thing.zst"},
+			ExpectedExt: "zst",
+			ExpectedErr: nil,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			ds := new(MockDataStore)
+			ds.On("ListFilePaths", mock.Anything, "", 2).Return(tt.files, tt.listErr).Once()
+
+			ext, err := GetLedgerFileExtension(context.Background(), ds)
+			require.Equal(t, tt.ExpectedExt, ext)
+
+			if tt.ExpectedErr != nil {
+				if tt.listErr != nil {
+					require.ErrorContains(t, err, tt.ExpectedErr.Error())
+				} else {
+					require.ErrorIs(t, err, tt.ExpectedErr)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+			ds.AssertExpectations(t)
+		})
+	}
 }
