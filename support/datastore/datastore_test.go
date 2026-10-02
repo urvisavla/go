@@ -26,7 +26,7 @@ func TestParsePrefix(t *testing.T) {
 		require.Equal(t, want, got, "input %q", in)
 	}
 
-	for _, in := range []string{"a//b", "./a/b", "a/./b", "a/../b", "a/b/."} {
+	for _, in := range []string{".", "..", "a//b", "./a/b", "a/./b", "a/../b", "a/b/.", "a/.."} {
 		_, err := parsePrefix("bucket/"+in, "/"+in)
 		require.Error(t, err, "input %q", in)
 	}
