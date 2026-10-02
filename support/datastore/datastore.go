@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"path"
 	"strings"
 	"time"
 )
@@ -76,8 +75,13 @@ func NewDataStore(ctx context.Context, datastoreConfig DataStoreConfig) (DataSto
 // empty, "." or ".." segments.
 func parsePrefix(bucketPath, urlPath string) (string, error) {
 	prefix := strings.Trim(urlPath, "/")
-	if prefix != "" && path.Clean(prefix) != prefix {
-		return "", fmt.Errorf("invalid bucket path %q: must not contain empty, \".\" or \"..\" segments", bucketPath)
+	if prefix == "" {
+		return "", nil
+	}
+	for _, seg := range strings.Split(prefix, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", fmt.Errorf("invalid bucket path %q: must not contain empty, \".\" or \"..\" segments", bucketPath)
+		}
 	}
 	return prefix, nil
 }
