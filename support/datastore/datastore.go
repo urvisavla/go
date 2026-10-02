@@ -71,12 +71,16 @@ func NewDataStore(ctx context.Context, datastoreConfig DataStoreConfig) (DataSto
 	}
 }
 
-// parsePrefix trims surrounding slashes from the bucket sub path and rejects
-// empty, "." or ".." segments.
+// parsePrefix returns the bucket sub path without the leading URL delimiter
+// and at most one trailing slash. Empty, "." or ".." segments are rejected.
 func parsePrefix(bucketPath, urlPath string) (string, error) {
-	prefix := strings.Trim(urlPath, "/")
+	prefix := strings.TrimPrefix(urlPath, "/")
 	if prefix == "" {
 		return "", nil
+	}
+	prefix = strings.TrimSuffix(prefix, "/")
+	if prefix == "" {
+		return "", fmt.Errorf("invalid bucket path %q: must not contain empty segments", bucketPath)
 	}
 	for _, seg := range strings.Split(prefix, "/") {
 		if seg == "" || seg == "." || seg == ".." {

@@ -13,10 +13,11 @@ func TestInvalidStore(t *testing.T) {
 }
 
 func TestParsePrefix(t *testing.T) {
+	// urlPath is what url.Parse returns for "scheme://bucket<path>".
 	ok := map[string]string{
 		"":                  "",
 		"/":                 "",
-		"a/b":               "a/b",
+		"/a/b":              "a/b",
 		"/a/b/":             "a/b",
 		"/objects/testnet/": "objects/testnet",
 	}
@@ -26,8 +27,8 @@ func TestParsePrefix(t *testing.T) {
 		require.Equal(t, want, got, "input %q", in)
 	}
 
-	for _, in := range []string{".", "..", "a//b", "./a/b", "a/./b", "a/../b", "a/b/.", "a/.."} {
-		_, err := parsePrefix("bucket/"+in, "/"+in)
+	for _, in := range []string{"//", "//a", "/a//", "/a//b", "/./a", "/a/./b", "/a/../b", "/a/b/.", "/a/..", "/.", "/.."} {
+		_, err := parsePrefix("bucket"+in, in)
 		require.Error(t, err, "input %q", in)
 	}
 }
