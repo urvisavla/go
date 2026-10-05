@@ -198,6 +198,51 @@ func TestLedgerFileIter_NonAdvancingCursor_YieldsError(t *testing.T) {
 	}
 
 	require.Equal(t, 0, count)
-	require.ErrorContains(t, gotErr, "did not advance")
+	require.ErrorContains(t, gotErr, "is not after")
+	ds.AssertExpectations(t)
+}
+
+func TestLedgerFileIter_RangeTwiceStartsOver(t *testing.T) {
+	ctx := context.Background()
+	ds := new(MockDataStore)
+
+	ds.On("ListFilePaths", mock.Anything, ListFileOptions{StartAfter: ""}).
+		Return([]string{"0000000A--10.xdr.zst"}, nil).Twice()
+	ds.On("ListFilePaths", mock.Anything, ListFileOptions{StartAfter: "0000000A--10.xdr.zst"}).
+		Return([]string{}, nil).Twice()
+
+	it := LedgerFileIter(ctx, ds, "", "")
+	for pass := 0; pass < 2; pass++ {
+		var keys []string
+		for lf, err := range it {
+			require.NoError(t, err)
+			keys = append(keys, lf.Key)
+		}
+		require.Equal(t, []string{"0000000A--10.xdr.zst"}, keys, "pass %d", pass)
+	}
+	ds.AssertExpectations(t)
+}
+
+func TestLedgerFileIter_BackwardsKey_ErrorsBeforeYield(t *testing.T) {
+	ctx := context.Background()
+	ds := new(MockDataStore)
+
+	// A key that sorts before the cursor must surface as an error.
+	ds.On("ListFilePaths", mock.Anything, ListFileOptions{StartAfter: ""}).
+		Return([]string{"00000014--20.xdr.zst"}, nil).Once()
+	ds.On("ListFilePaths", mock.Anything, ListFileOptions{StartAfter: "00000014--20.xdr.zst"}).
+		Return([]string{"0000000A--10.xdr.zst"}, nil).Once()
+
+	var keys []string
+	var gotErr error
+	for lf, err := range LedgerFileIter(ctx, ds, "", "") {
+		if err != nil {
+			gotErr = err
+			break
+		}
+		keys = append(keys, lf.Key)
+	}
+	require.Equal(t, []string{"00000014--20.xdr.zst"}, keys)
+	require.ErrorContains(t, gotErr, "is not after")
 	ds.AssertExpectations(t)
 }

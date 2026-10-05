@@ -723,6 +723,10 @@ func TestGCSFindLatestLedgerUpToSequence_PopulatedLakeWithSubfolder(t *testing.T
 			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-bucket", Name: "objects/testnet/backup/"},
 			Content:     []byte{},
 		},
+		{
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-bucket", Name: "objects/testnet/backup/.."},
+			Content:     []byte{},
+		},
 	}
 	for i := uint32(0); i < 3; i++ {
 		objs = append(objs, fakestorage.Object{
@@ -760,4 +764,35 @@ func TestFromGCSClient_RejectsNonCanonicalBucketPath(t *testing.T) {
 
 	_, err := FromGCSClient(context.Background(), server.Client(), "test-bucket/objects//testnet/")
 	require.ErrorContains(t, err, "invalid bucket path")
+}
+
+func TestGCSListFilePaths_UncleanKeysRoundTrip(t *testing.T) {
+	// Keys that path.Clean would rewrite must still page correctly.
+	names := []string{"objects/testnet/a//b", "objects/testnet/backup/..", "objects/testnet/x/.", "objects/testnet/z"}
+	var objs []fakestorage.Object
+	for _, n := range names {
+		objs = append(objs, fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-bucket", Name: n},
+			Content:     []byte("1"),
+		})
+	}
+	server := fakestorage.NewServer(objs)
+	defer server.Stop()
+
+	store, err := FromGCSClient(context.Background(), server.Client(), "test-bucket/objects/testnet")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	var got []string
+	startAfter := ""
+	for {
+		page, err := store.ListFilePaths(context.Background(), ListFileOptions{StartAfter: startAfter, Limit: 1})
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		got = append(got, page...)
+		startAfter = page[len(page)-1]
+	}
+	require.Equal(t, []string{"a//b", "backup/..", "x/.", "z"}, got)
 }

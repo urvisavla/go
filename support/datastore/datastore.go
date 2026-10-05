@@ -89,3 +89,18 @@ func parsePrefix(bucketPath, urlPath string) (string, error) {
 	}
 	return prefix, nil
 }
+
+// listRoot returns prefix plus "/", or "" for the bucket root. Object names
+// are exactly root+key.
+func listRoot(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+	return prefix + "/"
+}
+
+// fileKey returns name relative to root, and false for directory placeholders.
+func fileKey(name, root string) (string, bool) {
+	key := strings.TrimPrefix(name, root)
+	return key, key != "" && !strings.HasSuffix(key, "/")
+}

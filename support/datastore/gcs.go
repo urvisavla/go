@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path"
-	"strings"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -215,18 +214,14 @@ func (b GCSDataStore) putFile(ctx context.Context, filePath string, in io.Writer
 // and ordered lexicographically ascending as provided by the backend.
 // If limit <= 0, implementations default to a cap of 1,000; values > 1,000 are capped to 1,000.
 func (b GCSDataStore) ListFilePaths(ctx context.Context, options ListFileOptions) ([]string, error) {
-	var fullPrefix string
-
+	root := listRoot(b.prefix)
 	// Ensure the prefix ends with a slash so the query returns only objects
 	// within that directory, not similarly named paths like "a/b-1".
-	fullPrefix = path.Join(b.prefix, options.Prefix)
-	if fullPrefix != "" {
-		fullPrefix += "/"
-	}
+	fullPrefix := listRoot(path.Join(b.prefix, options.Prefix))
 
 	var StartAfter string
 	if options.StartAfter != "" {
-		StartAfter = path.Join(b.prefix, options.StartAfter)
+		StartAfter = root + options.StartAfter
 	}
 
 	query := &storage.Query{
@@ -262,14 +257,11 @@ func (b GCSDataStore) ListFilePaths(ctx context.Context, options ListFileOptions
 			continue
 		}
 
-		// Trim the configured prefix and any leading slash before appending
-		relative := strings.TrimPrefix(attrs.Name, b.prefix)
-		relative = strings.TrimLeft(relative, "/")
-		// Skip directory placeholder objects.
-		if relative == "" || strings.HasSuffix(relative, "/") {
+		key, ok := fileKey(attrs.Name, root)
+		if !ok {
 			continue
 		}
-		keys = append(keys, relative)
+		keys = append(keys, key)
 
 		remaining--
 	}

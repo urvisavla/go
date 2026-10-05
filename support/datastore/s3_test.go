@@ -733,3 +733,55 @@ func TestFromS3Client_RejectsNonCanonicalBucketPath(t *testing.T) {
 	_, err = FromS3Client(ctx, client, "test-bucket/objects//testnet/")
 	require.ErrorContains(t, err, "invalid bucket path")
 }
+
+func TestS3ListFilePaths_UncleanKeysRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	store, teardown := setupTestS3DataStore(t, ctx, "test-bucket/objects/testnet", map[string]mockS3Object{
+		"objects/testnet/a//b":      {body: []byte("1")},
+		"objects/testnet/backup/..": {body: []byte("1")},
+		"objects/testnet/x/.":       {body: []byte("1")},
+		"objects/testnet/z":         {body: []byte("1")},
+	})
+	defer teardown()
+
+	var got []string
+	startAfter := ""
+	for {
+		page, err := store.ListFilePaths(ctx, ListFileOptions{StartAfter: startAfter, Limit: 1})
+		require.NoError(t, err)
+		if len(page) == 0 {
+			break
+		}
+		got = append(got, page...)
+		startAfter = page[len(page)-1]
+	}
+	require.Equal(t, []string{"a//b", "backup/..", "x/.", "z"}, got)
+}
+
+func TestFromS3Client_ProbesWithTrailingSlash(t *testing.T) {
+	// The startup probe must send "<prefix>/" like ListFilePaths does.
+	ctx := context.Background()
+	var seen []string
+	mockServer := &mockS3Server{objects: make(map[string]mockS3Object)}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Has("list-type") {
+			seen = append(seen, r.URL.Query().Get("prefix"))
+		}
+		mockServer.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion("us-west-1"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("KEY", "SECRET", "")),
+	)
+	require.NoError(t, err)
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(server.URL)
+		o.UsePathStyle = true
+	})
+
+	_, err = FromS3Client(ctx, client, "test-bucket/ledgers/pubnet/")
+	require.NoError(t, err)
+	require.Equal(t, []string{"ledgers/pubnet/"}, seen)
+}
